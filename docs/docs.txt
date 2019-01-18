@@ -1,0 +1,3 @@
+
+For rudimentary documentaion please see http://tristan-mp.wikispaces.com/ or comments in the code. 
+

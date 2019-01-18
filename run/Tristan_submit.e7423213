@@ -1,0 +1,10 @@
+/var/spool/sge/node009/job_scripts/7423213: line 8: module: command not found
+mpirun: killing job...
+
+[node009:03125] [[23377,0],0]-[[23377,0],1] mca_oob_tcp_msg_recv: readv failed: Connection reset by peer (104)
+--------------------------------------------------------------------------
+mpirun was unable to cleanly terminate the daemons on the nodes shown
+below. Additional manual cleanup may be required - please refer to
+the "orte-clean" tool for assistance.
+--------------------------------------------------------------------------
+	node018.iceberg.shef.ac.uk

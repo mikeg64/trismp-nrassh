@@ -1,0 +1,128 @@
+/usr/local/packages5/hdf5-1.8.9_openmpigcc1.4.4/bin/h5pfc -DMPI -DHDF5 -DserIO -DtwoD  -O3  -c output.F90
+output.F90:12.15:
+
+module m_output
+               1
+Error: Unexpected MODULE statement at (1)
+output.F90:14.13:
+
+ use m_system
+             1
+Error: Unexpected USE statement at (1)
+output.F90:15.10:
+
+ use m_aux
+          1
+Error: Unexpected USE statement at (1)
+output.F90:16.21:
+
+ use m_communications
+                     1
+Error: Unexpected USE statement at (1)
+output.F90:17.13:
+
+ use m_fields
+             1
+Error: Unexpected USE statement at (1)
+output.F90:18.16:
+
+ use m_particles
+                1
+Error: Unexpected USE statement at (1)
+output.F90:19.13:
+
+ use m_domain
+             1
+Error: Unexpected USE statement at (1)
+output.F90:20.17:
+
+ use m_globaldata
+                 1
+Error: Unexpected USE statement at (1)
+output.F90:21.18:
+
+ use m_inputparser
+                  1
+Error: Unexpected USE statement at (1)
+output.F90:22.11:
+
+ use m_user
+           1
+Error: Unexpected USE statement at (1)
+output.F90:39.9:
+
+ use hdf5
+         1
+Error: Unexpected USE statement at (1)
+output.F90:42.8:
+
+ private
+        1
+Error: PRIVATE statement at (1) is only allowed in the specification part of a module
+output.F90:57.11:
+
+ real(dprec) :: time_end, time_diff, time_beg, timespan
+           1
+Error: Symbol 'dprec' at (1) has no IMPLICIT type
+output.F90:59.42:
+
+ integer(8) :: laprestart, namedrestartint
+                                          1
+Error: Unexpected data declaration statement at (1)
+output.F90:61.72:
+
+      pltstart, restart_status, stride, sele, seli, idx, idy, idz, istep
+                                                                        1
+Error: Unexpected data declaration statement at (1)
+output.F90:64.37:
+
+ logical :: writetestpart, selectprt 
+                                     1
+Error: Unexpected data declaration statement at (1)
+output.F90:65.29:
+
+ character (len=5) :: indchar
+                             1
+Error: Unexpected data declaration statement at (1)
+output.F90:66.29:
+
+ character (len=7) :: lapchar
+                             1
+Error: Unexpected data declaration statement at (1)
+output.F90:67.50:
+
+ character (len=9) :: frootprt, frootfld, froottrq
+                                                  1
+Error: Unexpected data declaration statement at (1)
+output.F90:68.31:
+
+ character (len=19) :: fnametrq
+                               1
+Error: Unexpected data declaration statement at (1)
+output.F90:69.42:
+
+ character (len=100) :: fnameprt, fnamefld
+                                          1
+Error: Unexpected data declaration statement at (1)
+output.F90:70.47:
+
+ character (len=46) :: frestartfld, frestartprt
+                                               1
+Error: Unexpected data declaration statement at (1)
+output.F90:71.53:
+
+ character (len=34) :: frestartprtloc, frestartfldloc
+                                                     1
+Error: Unexpected data declaration statement at (1)
+output.F90:72.37:
+
+ character (len=70) :: frestartprtlap
+                                     1
+Error: Unexpected data declaration statement at (1)
+output.F90:73.30:
+
+ character (len=10) :: jobname
+                              1
+Error: Unexpected data declaration statement at (1)
+Fatal Error: Error count reached limit of 25.
+make: *** [output.o] Error 1
