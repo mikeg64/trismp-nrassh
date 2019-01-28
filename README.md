@@ -69,11 +69,23 @@ Used the hdf5 library version 1.10.4
 
 
 `module purge`
+
+
 `module load mpi/openmpi/2.0.1/intel-17.0.0`
+
+
 `cd hdf5-1.10.4`
+
+
 `CC=$(which mpicc) FC=$(which mpif90) CPP=cpp ./configure --enable-parallel --enable-shared --enable-fortran --prefix=/data/cs1mkg/lib/hdf5`
+
+
 `make`
+
+
 `make install`
+
+
 
 Note the environment variables were set as follows 
 export PATH=$PATH":/data/cs1mkg/lib/hdf5/lib:/data/cs1mkg/lib/hdf5/bin"
