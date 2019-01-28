@@ -6,11 +6,11 @@
 
 <node_configuration>
 
-sizey 	= 2				# number of cpus in the y direction
+sizey 	= 8				# number of cpus in the y direction
 
 <time>
 
-last 	= 30000			# last timestep
+last 	= 100000		# last timestep
 
 c	= .45			# velocity of light in comp. units (this defines the timestep)
 
@@ -47,7 +47,7 @@ namedrestartint = 1000000       # interval for saving named restart files, like 
 
 <output>
 
-interval 	= 50		# plot interval
+interval 	= 500		# plot interval
 torqint		= 2000000	# interval for outputs at different resolution (currently broken)
 pltstart	= 0		# starting iteration for first plot
 
@@ -60,13 +60,13 @@ selectprt	= 0		# re-trace the same selected particles?
 
 <boundaries>
 
-periodicx	= 1			# periodic boundaries in the x direction?
+periodicx	= 0			# periodic boundaries in the x direction?
 periodicy	= 1			# periodic boundaries in the y direction?
 periodicz	= 1			# periodic boundaries in the z direction?
 
 <domain>
 
-enlarge		= 0			# if 1, enlarge box in the x direction if injector is close to right wall? 
+enlarge		= 1			# if 1, enlarge box in the x direction if injector is close to right wall? 
 movwin 		= 0			# if 1, use moving window 
 shiftinterval 	= 20			# how often to apply moving window (in steps)
 shiftstart 	= 1000			# at what step to start shifting moving window
@@ -74,12 +74,12 @@ movwingam       = 5.                # gamma factor of moving window. If > 10000,
                                         # if < 1, it is interpreted as v/c.
 <fields>
 
-btheta	= 0			# bfield angle bphi=0 -> bz, bph=90 in x-y plane, bth=0-> parallel
+btheta	= 85			# bfield angle bphi=0 -> bz, bph=90 in x-y plane, bth=0-> parallel
 bphi	= 90			#
 
 <particles>
 
-sigma	= 0.			# magnetization number (omega_c/omega_p)^2, including gamma0
+sigma	= 0.1			# magnetization number (omega_c/omega_p)^2, including gamma0
 maxptl0 = 3e7			# max number of particles in the simulation
 ppc0 	= 4			# number of particles per cell
 
@@ -93,16 +93,20 @@ c_omp	= 10			# electron skin depth in cells
 
 <problem>
  
-caseinit = 1                    #can be used to select subcases of the problem. Not used.     
+caseinit = 1   			 #can be used to select subcases of the problem. Not used. 
 
-#density_profile=0              #x,y,z dependent function distributing initial particle weight
-
+#density_profile=0.    	    #x,y,z dependent function distributing initial particle weight
+	
 temperature_ratio = 1       # T_e/T_i
 
 external_fields = 0         # if nonzero, add external nonevolving fields to mover
-sigma_ext = 0.0	            # strength of external magnetization,(omega_c/omega_p)^2, 
+sigma_ext = 0.008           # strength of external magnetization,(omega_c/omega_p)^2, 
                             # including gamma0 
 
+
 user_part_bcs=1             # call particle_bc_user routine from user file, specify particle bcs like walls
+
+wall = 1		    # use reflecting wall? Position is set in user file. 
+wallgam = 0.                # gamma of the moving reflecting wall. If < 1, read as v/c. Set to 0 or 1 to not move the wall. 
 
 

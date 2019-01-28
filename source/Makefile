@@ -4,64 +4,64 @@
 
 SHELL=/bin/sh
 
+#cc= h5pcc
+#FC= h5pfc
+#LD= h5pfc 
+
+
+cc= /data/cs1mkg/lib/hdf5/bin/h5pcc
+FC= /data/cs1mkg/lib/hdf5/bin/h5pfc
+LD= /data/cs1mkg/lib/hdf5/bin/h5pfc
+
+#INCPATH= -I/usr/local/packages/mpi/openmpi/3.1.1/gcc-8.2/include
+#LIBPATH = -L/usr/local/packages/mpi/openmpi/3.1.1/gcc-8.2/lib -L/data/cs1mkg/lib/hdf5-gnu/lib -lmpi -lmpi_f90  -lmpi_f77 -lhdf5_fortran -lhdf5
+
+INCPATH= -I/usr/local/packages/mpi/openmpi/2.0.1/intel-17.0.0/include -I/data/cs1mkg/lib/hdf5/include
+LIBPATH = -L/usr/local/packages/mpi/openmpi/2.0.1/intel-17.0.0/lib -L/data/cs1mkg/lib/hdf5/lib -lmpi  -lhdf5_fortran -lhdf5
 
 
 
 
-cc= gcc
-#cc= mpicc 
 
-#FC= /usr/local/packages5/hdf5/1.8.10/bin/h5pfc
-#LD= /usr/local/packages5/hdf5/1.8.10/bin/h5pfc
+#this is the user file used to initialize the problem and provide user boundary conditions
+#change the name of the user file for your problem; it will look fore $USER.F90 file. 
+# 
+#USER= user_weibel
+#USER= user_twostream
+USER= user_shock
 
+# Executable name
+EXECUTABLE= tristan-mp2d
 
-#FC= /usr/local/packages5/hdf5-1.8.9_pgi1.4.4/bin/h5pfc
-#LD= /usr/local/packages5/hdf5-1.8.9_pgi1.4.4/bin/h5pfc
+#Performance options
+PERFORMANCE= -O3  
+#-xhost -qopt-report -g -ipo
 
-
-#Mit FC= /usr/local/packages5/hdf5-1.8.9_openmpigcc1.4.4/bin/h5pfc
-#Mit LD= /usr/local/packages5/hdf5-1.8.9_openmpigcc1.4.4/bin/h5pfc
-
-FC= /usr/local/packages6/hdf5/hdf5-1.8.9/bin/h5pfc
-LD= /usr/local/packages6/hdf5/hdf5-1.8.9/bin/h5pfc
-
-INCPATH= -I/usr/local/mpi/gcc/openmpi/1.4.4/include
-
-LIBPATH = -L/usr/local/mpi/gcc/openmpi/1.4.4/lib -L/usr/local/packages6/hdf5/hdf5-1.8.9/lib -lmpi -lmpi_f90  -lmpi_f77 -lhdf5_fortran -lhdf5
-
-#INCPATH= -I/usr/local/packages5/hdf5-1.8.9_openmpigcc1.4.4/include
-
-USER=user_weibel
-#USER=user_shock
-
-# compiler and linker flags
-# for debuggin purposes use these flags: (compiler dependent) 
-#-check uninit -check pointers 
-#-warn uncalled -warn declarations -ftrapuv -g -warn unused
-
-# flags normaly used for the intel compilers
-
+#Precompiler options for enabling different algorithms
 CUSTOM= -DMPI -DHDF5 -DserIO -DtwoD 
-#-DLOCALSCRATCH 
-#-DLOCALRESTART
-#-DDEBUG
-PERFORMANCE= -O3
 
-# flags normaly used for the gcc and gfortran compilers
+# -DMPI use MPI 
+# -DHDF5 use HDF5
+# -DserIO use serial IO, all processors send chunks to rank 0 which saves into file
+#         omitting this option will use parallel IO; performance may vary
+# -DtwoD 2D code (ignorable z coordinate), omitting this defaults to 3D
+# -DDEBUG when enabled produces a lot of debugging information
 
-#CUSTOM= -DMPI -DHDF5 -DserIO -DtwoD -DWOODHEN0 
-#PERFORMANCE= -O3 -cpp -fno-range-check -ffree-line-length-none
+# undocumented options: do not use
+# -Dfilter2  
+# -DABSORB 
+# -DLOCALSCRATCH 
+# -DLOCALRESTART
 
-CFLAGS= 
+# flags normaly used for C and Fortran compilers
+CFLAGS= $(PERFORMANCE)
 FFLAGS= $(CUSTOM) $(PERFORMANCE)
 
 # Executable name
-
 EXECUTABLE= tristan-mp2d
 
 # Objects
-
-OBJS= system.o systemf.o par.o inputparser.o inputparserf.o fparser.o globaldata.o aux.o communications.o fields.o fieldboundaries.o particles.o domain.o $(USER).o output.o restart.o particles_movedeposit.o overload.o  initialize.o tristanmainloop.o tristan.o
+OBJS= system.o systemf.o par.o inputparser.o inputparserf.o fparser.o globaldata.o aux.o communications.o fields.o fieldboundaries.o particles.o domain.o dynamic_domain.o $(USER).o output.o restart.o particles_movedeposit.o overload.o  initialize.o tristanmainloop.o tristan.o
 
 ###########################
 
@@ -74,8 +74,8 @@ all: $(EXECUTABLE)
 	$(FC) $(FFLAGS) $(INCPATH) -c $^
 
 $(EXECUTABLE): $(OBJS)
-	$(FC) $(FFLAGS) -o $@ $(OBJS)
-	tar -cf code.tar *.c *.F90 Makefile Makefile3D
+	$(FC) $(FFLAGS) $(LIBPATH) -o $@ $(OBJS) 
+	tar -cf code.tar *.c *.h *.F90 Makefile* input*
 
 clean: 
 	rm -f $(OBJS)

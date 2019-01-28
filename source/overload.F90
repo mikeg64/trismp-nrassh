@@ -20,8 +20,6 @@ module m_overload
 	use m_aux
 	use m_particles
 	use m_fields
-!	use m_user_weibel
-!	use m_user_shock
 	use m_user
 	use m_domain
 	use m_inputparser
@@ -35,8 +33,6 @@ module m_overload_3d
 	use m_aux_3d
 	use m_particles_3d
 	use m_fields_3d
-!	use m_user_weibel_3d
-!	use m_user_shock_3d
 	use m_user_3d
 	use m_domain_3d
 	use m_inputparser_3d
@@ -75,7 +71,7 @@ module m_overload_3d
 	! public functions
 
 	public :: init_EMfields, init_particle_distribution, inject_particles, initialize_domain, &
-	read_input_user, field_bc_user
+	read_input_user, field_bc_user, shift_domain !, shift_ydomain 
 
 !-------------------------------------------------------------------------------
 !	MODULE PROCEDURES AND FUNCTIONS
@@ -97,38 +93,6 @@ subroutine read_input()
 	implicit none
 
 	! local variables
-	
-	integer :: lmovwin, lwall
-
-	call inputpar_geti_def("problem", "caseinit", 0, caseinit)
-
-	call inputpar_geti_def("problem", "movwin", 0, lmovwin)
-	call inputpar_geti_def("problem", "wall", 0, lwall)
-	
-	if (lmovwin==1) then
-		movwin=.true.
-	else
-		movwin=.false.
-	endif
-
-	if (lwall==1) then
-		wall=.true.
-	else
-		wall=.false.
-	endif
-	
-	call inputpar_geti_def("problem", "shiftint", 20, shiftint)
-	call inputpar_geti_def("problem", "shiftstart", 20, shiftstart)
-
-!	select case(caseinit)
-!		case(0)
-!			call read_input_weibel()
-!		case(1)
-!			call read_input_shock()
-!		case default
-!		   if(rank .eq. 0) print *, "No such caseinit defined in overload:",caseinit
-!	end select	
-
 	call read_input_user()
 
 end subroutine read_input
@@ -211,6 +175,33 @@ subroutine inject_particles()
 	call inject_particles_user()
 	
 end subroutine inject_particles
+
+
+!-------------------------------------------------------------------------------
+! 						subroutine shift_domain				 							
+!-------------------------------------------------------------------------------
+
+subroutine shift_domain()
+	
+	implicit none
+	
+	call shift_domain_user()
+	
+end subroutine shift_domain
+
+!-------------------------------------------------------------------------------
+! 						subroutine shift_domain				 							
+!-------------------------------------------------------------------------------
+
+!subroutine shift_ydomain()
+	
+!	implicit none
+
+	
+!	call shift_ydomain_user()
+	
+!end subroutine shift_ydomain
+
 
 
 !-------------------------------------------------------------------------------

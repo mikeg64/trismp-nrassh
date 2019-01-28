@@ -1,2 +1,0 @@
-gcc   -c system.c
-/usr/local/packages5/hdf5-1.8.9_pgi1.4.4/bin/h5pfc -DMPI -DHDF5 -DserIO -DtwoD  -O3  -c systemf.F90

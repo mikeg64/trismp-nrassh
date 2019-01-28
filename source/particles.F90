@@ -6,7 +6,7 @@
 !
 !
 
-#ifdef twoD 
+#ifdef twoD
 
 module m_particles
 
@@ -50,10 +50,10 @@ module m_particles_3d
 
 	type :: particle
 		sequence
-		real(dprec) :: x !x is real(dprec) :: to accomodate long and thin shock runs
-		real(sprec) :: y,z,u,v,w, ch, dummy
-		integer (kind=4) :: ind, proc,splitlev !need dum to keep size even # of bytes
+		real(sprec) :: x, y, z, u, v, w, ch
+		integer (kind=4) :: ind, proc, splitlev !need dum to keep size even # of bytes
 	end type particle
+
 	
 	type :: prtnum
 		sequence
@@ -64,54 +64,61 @@ module m_particles_3d
 !	VARIABLES
 !-------------------------------------------------------------------------------
 
-	real(sprec) :: gamma0, ppc0, delgam, npnb, betshock, dummyvar, qom, omega, sigma, mi, me, qmi, &
+	real(sprec) :: gamma0, ppc0, delgam, npnb, betshock, dummyvar, sigma, mi, me, qmi, &
 				   qme, leftwall, acool, qi, qe, q, c_omp, movwinoffset
 				   
-        real(dprec) :: pi 
-
-	logical :: cooling, shockframe, splitparts
+    real(dprec) :: pi
+    real(sprec) :: walloc
+    
+    integer :: upsamp_e, upsamp_i
 
 	
-	integer :: totalpartnum, shockloc, leftclean, nionout, nlecout, splitnmax,   &
+	integer :: totalpartnum, shockloc, leftclean, nionout, nlecout, splitnmax,  &
 			   splitratio, nioneject, nleceject, buffsize, movingshock, pcosthmult
 			   
 	integer, allocatable, dimension(:) :: pall 
 	
-	integer :: ions, lecs, maxhlf, lapreorder, maxptl, maxptl0, LenIonOutUp,LenIonOutDwn,LenLecOutUp, &
+	integer(8) :: maxptl0
+	integer :: ions, lecs, maxhlf, lapreorder, maxptl, LenIonOutUp,LenIonOutDwn,LenLecOutUp, &
                LenLecOutDwn,LenIonInBlw,LenIonInAbv,LenLecInBlw, LenLecInAbv, LenIonOutLft, &
-               LenIonOutRgt,LenLecOutLft, LenLecOutRgt, LenIonInLft, LenIonInRgt,LenLecInLft,LenLecInRgt
+               LenIonOutRgt,LenLecOutLft, LenLecOutRgt, LenIonInLft, LenIonInRgt,LenLecInLft,LenLecInRgt, &
+               LenIonOutPlus, LenIonOutMinus, LenIonInPlus, LenIonInMinus, &
+               LenLecOutPlus, LenLecOutMinus, LenLecInPlus, LenLecInMinus, &
+	       outcorner
       
 	integer :: receivedions, receivedlecs, injectedions, injectedlecs
 
-
-	logical prt_first
+	! these variables for writing test particles in output.F90
+	logical prt_first_lec, prt_first_ion
+	
+	
 	real(dprec) :: time_cut     
 	
 	type(particle),allocatable :: p(:)
 	type(particle),allocatable :: tempp(:) 
-	type(particle),allocatable :: poutup(:), pinabv(:),poutdwn(:) &
-	,pinblw(:),poutlft(:),poutrgt(:),pinlft(:),pinrgt(:)
+	type(particle),allocatable :: poutup(:), pinabv(:),poutdwn(:),pinblw(:) &
+	,poutlft(:),poutrgt(:),pinlft(:),pinrgt(:) &
+	,poutminus(:),poutplus(:),pinminus(:),pinplus(:)
 	
-	!integer :: particletype !, oldtypes(0:2), blockcounts(0:2),offsets(0:2),extent
-
-
+ 	integer, allocatable :: pind(:) !for optimized BC
+	
 	! Variables related to particle spliting
+!	real, allocatable, dimension(:) :: split_E_ions, split_E_lecs
+!	real splitoffs          ! maximal offset of child particles [in cells]
+!	integer :: split_auto      ! if =1 then split level thresholds automatically adjust  
+!	integer :: split_lap_start, split_lap_rate
 	
-	real, allocatable, dimension(:) :: split_E_ions, split_E_lecs
-	real splitoffs          ! maximal offset of child particles [in cells]
-	integer :: split_auto      ! if =1 then split level thresholds automatically adjust  
-	integer :: split_lap_start, split_lap_rate
+!	integer ::split_prev_ions ! number of unsplit ions in last cycle split
+!	integer ::split_prev_lecs ! number of unsplit ions in last cycle split
+!	real split_frac_ions    ! fraction of split ions w.r.t total
+!	real split_frac_lecs    ! fraction of split lecs w.r.t total
+!	integer ::split_gamma_res ! resolution of energy histogram
+!	real split_lgamma_m1_min ! min(log(gamma)-1) of histogram
+!	real split_lgamma_m1_max ! max(log(gamma)-1) of histogram
+!	real split_min_ratio    ! minimal ratio betwen consecutive split thresholds. 
+!	real(dprec) :: split_timer
 	
-	integer ::split_prev_ions ! number of unsplit ions in last cycle split
-	integer ::split_prev_lecs ! number of unsplit ions in last cycle split
-	real split_frac_ions    ! fraction of split ions w.r.t total
-	real split_frac_lecs    ! fraction of split lecs w.r.t total
-	integer ::split_gamma_res ! resolution of energy histogram
-	real split_lgamma_m1_min ! min(log(gamma)-1) of histogram
-	real split_lgamma_m1_max ! max(log(gamma)-1) of histogram
-	real split_min_ratio    ! minimal ratio betwen consecutive split thresholds. 
-	real(dprec) :: split_timer
-
+	
 	logical :: external_fields, user_part_bcs
 
 !-------------------------------------------------------------------------------
@@ -124,30 +131,39 @@ module m_particles_3d
 
 	! public functions
 	
-	public :: split_parts, reorder_particles, exchange_particles, zigzag, &
+        public :: reorder_particles, exchange_particles, zigzag, &
 			  inject_others, allocate_particles, maxwell_dist,  powerlaw3d, &
-			  read_input_particles, check_overflow, check_overflow_num, init_maxw_table, init_split_parts, &
-			  inject_from_wall, inject_plasma_region
+			  read_input_particles, check_overflow, check_overflow_num, init_maxw_table, &
+			  inject_from_wall, inject_plasma_region, copyprt 
+!        public ::  split_from_wall, split_plasma_region, init_split_parts, split_E_ions, split_E_lecs, 
+
 
 	! public variables 
 
-	public ::  ppc0, splitparts, buffsize, poutup, pinabv, poutdwn, pinblw, poutlft, &    ! used in domain
-			  poutrgt, pinlft, pinrgt, pall, ions, lecs, particle, p, maxhlf, maxptl0, &           ! used in domain
-			  leftwall, split_E_ions, split_E_lecs,  &							   ! used in restart
-			  sigma, gamma0, delgam, mi, me, dummyvar, cooling, acool, nionout, nlecout, & ! used in outputs
+	public :: ppc0,upsamp_e,upsamp_i, buffsize, poutup, pinabv, poutdwn, pinblw, &
+			  poutlft, poutrgt, pinlft, pinrgt, &
+			  poutminus, poutplus, pinminus, pinplus, &
+			  pall, ions, lecs, particle, p, maxhlf, maxptl0, &           ! used in domain
+			  leftwall, walloc, &							   ! used in restart
+			  sigma, gamma0, delgam, mi, me, dummyvar, nionout, nlecout, & ! used in outputs
 			  injectedions, injectedlecs, receivedions, receivedlecs, nioneject, nleceject, &      ! used in outputs
 			  splitratio, qi, qe, q, prtnum, c_omp, maxptl, movingshock, &						   ! used in outputs
-			  time_cut, prt_first, shockframe, betshock, leftclean, tempp, &					   ! used in initialize
+			  time_cut, prt_first_lec, prt_first_ion, betshock, leftclean, tempp, pind, &	!pind for optim		
+! used in initialize
 !			  gamma_table, pdf_table, gamma_table1, pdf_table1, gamma_table_cold, pdf_table_cold, &! used in initialize
-			  splitnmax, splitoffs, split_auto, split_lap_start, split_lap_rate, split_prev_ions, &! used in initialize
-			  split_prev_lecs, split_frac_ions, split_frac_lecs, split_gamma_res, &				   ! used in initialize
-			  split_lgamma_m1_min, split_lgamma_m1_max, split_min_ratio, split_timer, pdf_sz, npnb,&! used in initialize
-			  qme, qmi, lapreorder, &											   				   ! used in initialize
-			  totalpartnum, qom, omega, pcosthmult, LenIonOutUp, &		   ! used in the m_user_* module
-			  LenIonOutDwn,LenLecOutUp, LenLecOutDwn,LenIonInBlw,LenIonInAbv,LenLecInBlw, &        ! used in the m_user_* module
-			  LenLecInAbv, LenIonOutLft, LenIonOutRgt,LenLecOutLft, LenLecOutRgt, LenIonInLft, &   ! used in the m_user_* module
-			  LenIonInRgt,LenLecInLft,LenLecInRgt, shockloc, & 										   ! used in the m_user_* module
+!			  splitnmax, splitoffs, split_auto, split_lap_start, split_lap_rate, split_prev_ions, &! used in initialize
+!			  split_prev_lecs, split_frac_ions, split_frac_lecs, split_gamma_res, &				   ! used in initialize
+!			  split_lgamma_m1_min, split_lgamma_m1_max, split_min_ratio, split_timer, &! used in initialize
+			  pdf_sz, npnb,qme, qmi, lapreorder, &											   				   ! used in initialize
+			  totalpartnum, pcosthmult, LenIonOutUp, &		   ! used in the m_user_* module
+			  LenIonOutDwn,LenLecOutUp, LenLecOutDwn,LenIonInBlw,LenIonInAbv,LenLecInBlw, LenLecInAbv, &        ! used in the m_user_* module
+			  LenIonOutLft, LenIonOutRgt,LenLecOutLft, LenLecOutRgt, LenIonInLft, &   ! used in the m_user_* module
+			  LenIonInRgt,LenLecInLft,LenLecInRgt, &
+			  LenIonOutPlus, LenIonOutMinus, LenIonInPlus, LenIonInMinus, &
+              LenLecOutPlus, LenLecOutMinus, LenLecInPlus, LenLecInMinus, &
+			  shockloc, outcorner, & 										   ! used in the m_user_* module
 			  movwinoffset, pi, external_fields, user_part_bcs
+		
 			  
 !-------------------------------------------------------------------------------
 !	MODULE PROCEDURES AND FUNCTIONS
@@ -179,19 +195,24 @@ subroutine read_input_particles()
 	call inputpar_getd_def("particles", "me", 1._sprec, me)
 	call inputpar_getd_def("particles", "mi", 20._sprec, mi)
 
-	call inputpar_getd_def("particles", "gamma0", 1.1_sprec, gamma0)
+	call inputpar_getd_def("particles", "gamma0", 1._sprec, gamma0)
 
 	call inputpar_getd_def("particles", "c_omp", 0._sprec, c_omp)
-
+	
+	call inputpar_geti_def("problem", "upsamp_e", 1, upsamp_e)
+	call inputpar_geti_def("problem", "upsamp_i", 1, upsamp_i)		
+	
+	
         !non-rel drift velocities can be specified with gamma<1 in input file. gamma = beta in that case. 
 	if(gamma0 .lt. 1) gamma0=sqrt(1./(1.-gamma0**2)) 
 
 	maxptl0=lmaxptl0
+!	maxptl0=lmaxptl0*sizez	!weak scaling hack
 
 	!plasma reaction
 	omp=c/c_omp
 	        
- 	beta=sqrt(1.-1./gamma0**2)
+ 	beta=sqrt(1.-1./gamma0**2) !drift velocity
 	
 	!note that gamma0 is used in the definition of omega_p to get charge. 
 	qe=-(omp**2*gamma0)/((ppc0*.5)*(1+me/mi)) 
@@ -202,12 +223,37 @@ subroutine read_input_particles()
 	me=me*abs(qi)
 	mi=mi*abs(qi)
 	
-	qme=qe/me
-	qmi=qi/mi 
+	qme=qe/me	! equal to -1/me in input
+	qmi=qi/mi	! equal to  1/mi in input
+ 
+       	Binit=sqrt(gamma0*ppc0*.5*c**2*(me*(1+me/mi))*sigma)
 
+        pcosthmult=1 !by default, Maxwellians will be initialized in 3D (nonzero spread in 3 directions)
+
+!	qi=0.
+!	qe=0.
 
 end subroutine read_input_particles
 
+!-------------------------------------
+!       Subroutine copyprt
+!       copies one particle type to another explicitly, without relying on F90 intrinsics
+!
+!-------------------------------------
+	subroutine copyprt(inp,outp)
+	type(particle), intent(in)::inp
+	type(particle), intent(out)::outp
+	outp%x=inp%x
+	outp%y=inp%y
+	outp%z=inp%z
+	outp%u=inp%u
+	outp%v=inp%v
+	outp%w=inp%w
+	outp%ch=inp%ch
+	outp%ind=inp%ind
+	outp%proc=inp%proc
+	outp%splitlev=inp%splitlev
+	end subroutine copyprt
 
 
 !-------------------------------------------------------------------------------
@@ -240,16 +286,17 @@ subroutine allocate_particles()
 	! buffer size for particle communication
 
 #ifndef twoD
-	buffsize = max(1*int(ppc0*c*max((mx-5)*(my-5),1*(mx-5)*(mz-5))),10000)
+	buffsize = max(10*int(ppc0*max(upsamp_e,upsamp_i)*c*max((mx-5)*(my-5),1*(mx-5)*(mz-5))),10000)
 #else
-	buffsize = max(3*int(ppc0*c*(1*(mx-5))),60000) !5 for splitting particles
-	if (splitparts) buffsize=buffsize*150 
+!	buffsize = max(3*int(ppc0*c*(1*(mx-5))),60000) !5 for splitting particles
+	buffsize = max(3*int(ppc0*max(upsamp_e,upsamp_i)*c*max((mx-5),(my-5))),60000)
+!        if (splitparts) buffsize=buffsize*150 
 #endif
 	
 	! allocate particle buffers
 	
 	allocate(p(maxptl),tempp(maxhlf))
-	
+        allocate(pind(maxhlf)) !for optimization
 	p%x=0
 	p%y=0
 	p%z=0
@@ -259,16 +306,27 @@ subroutine allocate_particles()
 	p%ch=1
 	p%splitlev=1
 	
-	allocate(poutup(buffsize),poutdwn(buffsize),pinblw(buffsize) &
-	,pinabv(buffsize), poutlft(buffsize),poutrgt(buffsize) &
-	,pinlft(buffsize),pinrgt(buffsize))
+	allocate(poutup(buffsize),poutdwn(buffsize),pinblw(buffsize),pinabv(buffsize) &
+	,poutlft(buffsize),poutrgt(buffsize),pinlft(buffsize),pinrgt(buffsize) &
+	,poutminus(buffsize),poutplus(buffsize),pinminus(buffsize),pinplus(buffsize))
 	
+	! lot = mx*my for 2D ; total cells/processor
 	allocate(pall(lot)) ! this is used in the particle module to reorder particles
-
+ 
+        splitratio=10. !legacy splitting -- should not be used 
 	splitnmax=15            ! max number of levels when splitting is used
+		
+	x1in=3.
+	x2in=mx0-2.
+	y1in=3.
+	y2in=my0-2.
+	z1in=3.
+	z2in=mz0-2.
 
-	allocate(split_E_ions(splitnmax))
-	allocate(split_E_lecs(splitnmax))
+        totalpartnum=0
+	
+!	allocate(split_E_ions(splitnmax))
+!	allocate(split_E_lecs(splitnmax))	
 	
 end subroutine allocate_particles
 
@@ -301,7 +359,7 @@ subroutine check_overflow_num(num)
 	if(num .gt. maxhlf) then 
 	   print *, rank, ": OVERFLOW: number of injected &
 	   particles will exceed the maximum. Increase maxptl in &
-	   input file and restart" 
+	   input file and restart" , num, maxhlf
 	   stop
 	endif
 end subroutine check_overflow_num
@@ -345,12 +403,10 @@ subroutine reorder_particles_()
 	
 	integer ::n, celli, k,j, i
 
-
-
 	if(Rank.eq.0)print *, "reordering particles"    
 	pall=0
 	!count the number of particles in each cell
-
+ 
 	do n=1,ions
 		celli=int(p(n)%x)+int(p(n)%y)*iy+int(p(n)%z)*iz !ix=1
 		pall(celli)=pall(celli)+1
@@ -407,7 +463,7 @@ subroutine reorder_particles_()
 	!            if(Rank .eq. 0) print *,"done realloc"
 	
 	if(debug) print *,rank,": done realloc"
-	
+
 	do n=maxhlf+1,maxhlf+lecs
 		celli=int(p(n)%x)+int(p(n)%y)*iy+int(p(n)%z)*iz !ix=1
 		j=pall(celli)
@@ -465,12 +521,11 @@ subroutine index_particles()
 end subroutine index_particles
 
 
-
-
 !-------------------------------------------------------------------------------
-! 						subroutine zigzag()					 
+! 				subroutine zigzag()					 
 !																		
 ! Charge (current) deposition on the grid
+!
 !
 !-------------------------------------------------------------------------------
 
@@ -481,16 +536,27 @@ subroutine zigzag(x2,y2,z2,x1,y1,z1,in)
 	! dummy variables
 	
 	logical :: in
-	real(dprec) :: x1,x2
-	real(sprec) :: y1,z1,y2,z2
+	real(sprec) :: x1,x2, y1, y2
+	real(sprec) :: z1,z2
 	
-	! local variables
-	
-	real(dprec) :: xr
-	real yr,zr
+	! relay point (xr,yr,zr)
+	real(sprec) :: xr, yr
+	real zr
+	! charge fluxes in 1st order scheme
 	real Fx1, Fx2, Fy1, Fy2, Fz1, Fz2
+	! shape functions
 	real Wx1, Wx2, Wy1, Wy2, Wz1, Wz2
-	integer ::i1, i2, j1, j2, k1, k2
+	integer ::i1, i2, j1, j2, k1, k2  
+
+	! dummy variables
+	integer :: s1, s2, s3
+	! charge fluxes in 2nd order scheme
+	real, dimension(2) :: flx, fly, flz
+	real xp, yp, zp	
+	! shape functions in 2nd order scheme
+	real, dimension(3) :: Sx, Sy, Sz
+	
+	! zigzag method (1st order version) (Ref: Umeda et al. 2003)
 	
 	i1=aint(x1)
 	i2=aint(x2)
@@ -552,8 +618,6 @@ subroutine zigzag(x2,y2,z2,x1,y1,z1,in)
 		curx(i2,j2+1,k2+1)= curx(i2,j2+1,k2+1)+Fx2 *  Wy2    * Wz2
 #endif
 
-	!-----
-
 	cury(i1  ,j1,k1  )= cury(i1  ,j1,k1  )+Fy1 * (1.-Wx1)*(1.-Wz1)
 	cury(i1+1,j1,k1  )= cury(i1+1,j1,k1  )+Fy1 *  Wx1    *(1.-Wz1) 
 #ifndef twoD
@@ -568,8 +632,6 @@ subroutine zigzag(x2,y2,z2,x1,y1,z1,in)
 		cury(i2+1,j2,k2+1)= cury(i2+1,j2,k2+1)+Fy2 *  Wx2    * Wz2
 #endif
 
-	!-----
-
 	curz(i1  ,j1  ,k1)= curz(i1  ,j1  ,k1)+Fz1 * (1.-Wx1)*(1.-Wy1)
 	curz(i1+1,j1  ,k1)= curz(i1+1,j1  ,k1)+Fz1 *  Wx1    *(1.-Wy1)
 	curz(i1  ,j1+1,k1)= curz(i1  ,j1+1,k1)+Fz1 * (1.-Wx1)* Wy1
@@ -579,107 +641,501 @@ subroutine zigzag(x2,y2,z2,x1,y1,z1,in)
 	curz(i2+1,j2  ,k2)= curz(i2+1,j2  ,k2)+Fz2 *  Wx2    *(1.-Wy2)
 	curz(i2  ,j2+1,k2)= curz(i2  ,j2+1,k2)+Fz2 * (1.-Wx2)* Wy2
 	curz(i2+1,j2+1,k2)= curz(i2+1,j2+1,k2)+Fz2 *  Wx2    * Wy2
-	
-
-	
-	in=.true.
-	if(periodicx .eq. 1) then 
-		in=.true.
-	else
-		in=(x2.gt.3.0).and.(x2.lt.mx-2.0)
-	endif
-	
-	if(in) then
-	
-		if(periodicy .eq. 1) then 
-			in=.true.
-		else
-			if(modulo(rank,sizey).eq.0) in=(y2.gt.3.0)
-			if(modulo(rank,sizey).eq.sizey-1) in=(y2.lt.my-2.0)
-			if(size0.eq.1) in=(y2.gt.3.0).and.(y2.lt.my-2.0)
-		endif
 		
-		if(periodicz .eq. 1) then
-			in=.true.
-		else
-			if(rank/sizey.eq.0) in=(z2.gt.3.0)
-			if(rank/sizey.eq.sizez-1) in=(z2.lt.mz-2.0)
-			if(size0.eq.1)in=(z2.gt.3.0).and.(z2.lt.mz-2.0)
-		endif
-	
-	endif
 
-	
+	in=.true.
+		
 end subroutine zigzag
-
 
 !-------------------------------------------------------------------------------
 ! 						subroutine inject_others()					 
 !																		
-! Injects particles into the simulation
+! Injects particles that cross from other processors
 !
 !-------------------------------------------------------------------------------
-
 subroutine inject_others()
 
 	implicit none
 
 	real(dprec) :: time01, time02, time03, time04
-	integer ::n
+	real perz, pery
+	integer ::n, j1, k1
+
+!	print *, rank,": in InjO, b4", "lap",lap, LenIonOutUp, LenIonOutDwn, LenLecOutUp, LenLecOutDwn
+
+	LenIonOutPlus=0
+	LenLecOutPlus=0
+	LenIonOutMinus=0
+	LenLecOutMinus=0	
+			
+	LenIonOutRgt=0
+	LenLecOutRgt=0
+	LenIonOutLft=0
+	LenLecOutLft=0
+
+	LenIonOutUp=0 !resetting these in anticipation of needing to send more
+	LenIonOutDwn=0 !particles in z direction to accommodate corner crossing particles
+	LenLecOutUp=0
+	LenLecOutDwn=0
 	
 	receivedions=0
 	receivedlecs=0
-	
+		
+#ifndef twoD	
 	do n=1,LenIonInAbv
 		ions=ions+1
-		p(ions)=pinabv(n)
+!		p(ions)=pinabv(n)
+		call copyprt(pinabv(n),p(ions))
 	enddo
 	
 	do n=1,LenLecInAbv
 		lecs=lecs+1
-		p(maxhlf+lecs)=pinabv(LenIonInAbv+n)
+!		p(maxhlf+lecs)=pinabv(LenIonInAbv+n)
+		call copyprt(pinabv(LenIonInAbv+n),p(maxhlf+lecs))
 	enddo
 
 	!those that entered from below
 
 	do n=1,LenIonInBlw
 		ions=ions+1
-		p(ions)=pinblw(n)
+!		p(ions)=pinblw(n)
+		call copyprt(pinblw(n),p(ions))
 	enddo
 	
 	do n=1,LenLecInBlw
 		lecs=lecs+1
-		p(maxhlf+lecs)=pinblw(LenIonInBlw+n)
+!		p(maxhlf+lecs)=pinblw(LenIonInBlw+n)
+		call copyprt(pinblw(LenIonInBlw+n),p(maxhlf+lecs))
 	enddo
+#endif
 	
-	!now inject particles that entered from left and right in y
-	
+
+	if(sizey .ne. 1) then
+			
+	!now inject particles that entered from left and right in y		
 	do n=1,LenIonInRgt
 		ions=ions+1
-		p(ions)=pinrgt(n)
-	enddo
-	
-	do n=1,LenLecInRgt
-		lecs=lecs+1
-		p(maxhlf+lecs)=pinrgt(LenIonInRgt+n)
-	enddo
+!		p(ions)=pinrgt(n)
+		call copyprt(pinrgt(n),p(ions))
 
+#ifndef twoD
+!#ifdef CORNER
+
+
+!hack:  to take care of particles that go through corners
+		perz=sign(.5*(mz-5.),p(ions)%z-3.)+sign(.5*(mz-5.),p(ions)%z-mz +2.)
+!hack: need to add special rules for perz in case last mz is not equal to mzall
+!	if(perz .ne. 0) then 
+!	   print *, rank," :", "perz ne 0, ir", lap,n,ions, perz,p(ions)%x, p(ions)%y, p(ions)%z,p(ions)%z-mz +2.,p(ions)%z-3.
+!	endif
+
+		if(perz .lt. 0) then		
+			! down rank	(-z direction)	
+			k1=modulo(rank/(sizex*sizey) - 1,sizez)*(sizex*sizey) + & 
+			      modulo(rank,sizex*sizey) 
+			perz=-(mzl(k1+1)-5.)				
+		endif		
+		
+        p(ions)%z=p(ions)%z-perz   
+		if(perz .lt. 0) then
+		!this particle is going to the processor below
+		      LenIonOutDwn=LenIonOutDwn+1
+		     ! poutdwn(LenIonOutDwn)=p(ions)           
+		      call copyprt(p(ions),poutdwn(LenIonOutDwn))
+!		   if(periodicz .eq. 0 .and. & 
+!                      ((p(ions)%z +perz+ rank/sizey*(mzall-5).lt.z1in) &
+!                       .or.(p(ions)%z+perz + rank/sizey*(mzall-5).gt.z2in)) ) then
+!			 LenIonOutDwn=LenIonOutDwn-1  !let the particle escape 
+!		   endif
+		endif
+	
+		if(perz .gt. 0) then
+			!this particle is going to the processor above
+			LenIonOutUp=LenIonOutUp+1
+		   !	poutup(LenIonOutUp)=p(ions)
+			call copyprt(p(ions),poutup(LenIonOutUp))
+!		   if ( periodicz .eq. 0 .and. & 
+!                       ((p(ions)%z+perz + rank/sizey*(mzall-5).lt.z1in) &
+!                     .or.(p(ions)%z+perz + rank/sizey*(mzall-5).gt.z2in)) ) then
+!			 LenIonOutUp=LenIonOutUp-1  !let the particle escape 
+!		   endif
+		endif
+	if(perz .ne. 0) then	
+		ions=ions-1	
+	endif	
+ !end hacking
+!end ifdef CORNER
+!#endif
+#endif
+	enddo  !do n=1,LenIonInRgt
+	
 	!those that entered from left
 
 	do n=1,LenIonInLft
 		ions=ions+1
-		p(ions)=pinlft(n)
-	enddo
+!		p(ions)=pinlft(n)
+		call copyprt(pinlft(n),p(ions))
+
+#ifndef twoD
+!#ifdef CORNER
+!hacking:  to take care of particles that go through corners
+	perz=sign(.5*(mz-5.),p(ions)%z-3.)+sign(.5*(mz-5.),p(ions)%z-mz +2.)
+!hack: need to add special rules for perz in case last mz is not equal to mzall
+!	if(perz .ne. 0) then 
+!	   print *, rank," :", "perz ne 0, il", lap,n,ions, perz,p(ions)%x, p(ions)%y, p(ions)%z,p(ions)%ind, p(ions)%proc
+!	endif		
+		if(perz .lt. 0) then		
+			! down rank	(-z direction)	
+			k1=modulo(rank/(sizex*sizey) - 1,sizez)*(sizex*sizey) + & 
+			modulo(rank,sizex*sizey) 
+			perz=-(mzl(k1+1)-5.)				
+		endif
+        p(ions)%z=p(ions)%z-perz   
+		if(perz .lt. 0) then
+		!this particle is going to the processor below
+		      LenIonOutDwn=LenIonOutDwn+1
+!		      poutdwn(LenIonOutDwn)=p(ions)           
+		      call copyprt(p(ions),poutdwn(LenIonOutDwn))
+
+!		   if ( periodicz .eq. 0 .and. & 
+!                        ((p(ions)%z +perz+ rank/sizey*(mzall-5).lt.z1in) &
+!                         .or.(p(ions)%z+perz + rank/sizey*(mzall-5).gt.z2in)) ) then
+!			 LenIonOutDwn=LenIonOutDwn-1  !let the particle escape 
+!		   endif
+		endif
+	
+		if(perz .gt. 0) then
+			!this particle is going to the processor above
+			LenIonOutUp=LenIonOutUp+1
+		!	poutup(LenIonOutUp)=p(ions)
+			call copyprt(p(ions),poutup(LenIonOutUp))
+			
+!		   if ( periodicz .eq. 0 .and. & 
+!                       ((p(ions)%z+perz + rank/sizey*(mzall-5).lt.z1in) &
+!                     .or.(p(ions)%z+perz + rank/sizey*(mzall-5).gt.z2in)) ) then
+!			 LenIonOutUp=LenIonOutUp-1  !let the particle escape 
+!		   endif
+		endif
+	if(perz .ne. 0) then	
+		ions=ions-1	
+	endif	
+ !end hacking
+!end ifdef CORNER
+!#endif 
+#endif
+	enddo	!do n=1,LenIonInLft
+
+	do n=1,LenLecInRgt
+
+		lecs=lecs+1
+!		p(maxhlf+lecs)=pinrgt(LenIonInRgt+n)
+		call copyprt(pinrgt(LenIonInRgt+n),p(maxhlf+lecs))
+
+
+#ifndef twoD
+!#ifdef CORNER
+!hacking:  to take care of particles that go through corners
+	perz=sign(.5*(mz-5.),p(maxhlf+lecs)%z-3.)+sign(.5*(mz-5.),p(maxhlf+lecs)%z- mz +2.)
+!hack: need to add special rules for perz in case last mz is not equal to mzall
+ 
+		if(perz .lt. 0) then		
+			! down rank	(-z direction)	
+			k1=modulo(rank/(sizex*sizey) - 1,sizez)*(sizex*sizey) + & 
+			      modulo(rank,sizex*sizey) 
+			perz=-(mzl(k1+1)-5.)				
+		endif
+		
+		p(maxhlf+lecs)%z=p(maxhlf+lecs)%z-perz   
+
+!	if(perz .ne. 0) then 
+!	   print *, rank," :", "perz ne 0, er", lap,n,lecs, perz,p(maxhlf+lecs)%x, p(maxhlf+lecs)%y, p(maxhlf+lecs)%z,p(maxhlf+lecs)%ind, p(maxhlf+lecs)%proc
+!	endif
+
+		if(perz .lt. 0) then
+		!this particle is going to the processor below
+		      LenLecOutDwn=LenLecOutDwn+1
+	!	      poutdwn(LenIonOutDwn+LenLecOutDwn)=p(maxhlf+lecs)           
+		     call copyprt(p(maxhlf+lecs),poutdwn(LenIonOutDwn+LenLecOutDwn))
+
+!		   if ( periodicz .eq. 0 .and. & 
+!                       ((p(maxhlf+lecs)%z +perz+ rank/sizey*(mzall-5).lt.z1in) &
+!                         .or.(p(maxhlf+lecs)%z+perz + rank/sizey*(mzall-5).gt.z2in)) ) then
+!			 LenLecOutDwn=LenLecOutDwn-1  !let the particle escape 
+!		   endif
+		endif
+	
+		if(perz .gt. 0) then
+			!this particle is going to the processor above
+			LenLecOutUp=LenLecOutUp+1
+!			poutup(LenIonOutUp+LenLecOutUp)=p(maxhlf+lecs)
+			call copyprt(p(maxhlf+lecs),poutup(LenIonOutUp+LenLecOutUp))
+			
+!		   if ( periodicz .eq. 0 .and. & 
+!                        ((p(maxhlf+lecs)%z+perz + rank/sizey*(mzall-5).lt.z1in) &
+!                     .or.(p(maxhlf+lecs)%z+perz+ rank/sizey*(mzall-5).gt.z2in)) ) then
+!			 LenLecOutUp=LenLecOutUp-1  !let the particle escape 
+!		   endif
+		endif
+	if(perz .ne. 0) then	
+		lecs=lecs-1	
+	endif	
+!end ifdef CORNER
+!#endif 
+#endif
+	enddo !do n=1,LenLecInRgt
 	
 	do n=1,LenLecInLft
 		lecs=lecs+1
-		p(maxhlf+lecs)=pinlft(LenIonInLft+n)
-	enddo
+!		p(maxhlf+lecs)=pinlft(LenIonInLft+n)
+		call copyprt(pinlft(LenIonInLft+n),p(maxhlf+lecs))
+#ifndef twoD
+!#ifdef CORNER
+!hacking:  to take care of particles that go through corners
+	perz=sign(.5*(mz-5.),p(maxhlf+lecs)%z-3.)+sign(.5*(mz-5.),p(maxhlf+lecs)%z- mz +2.)
+!hack: need to add special rules for perz in case last mz is not equal to mzall
+
+		if(perz .lt. 0) then		
+			! down rank	(-z direction)	
+			k1=modulo(rank/(sizex*sizey) - 1,sizez)*(sizex*sizey) + & 
+			      modulo(rank,sizex*sizey) 
+			perz=-(mzl(k1+1)-5.)				
+		endif		
+		
+!	if(perz .ne. 0) then 
+!	   print *, rank," :", "perz ne 0, el", lap,n,lecs, perz,p(maxhlf+lecs)%x, p(maxhlf+lecs)%y, p(maxhlf+lecs)%z,p(maxhlf+lecs)%ind, p(maxhlf+lecs)%proc
+!	endif
+
+        p(maxhlf+lecs)%z=p(maxhlf+lecs)%z-perz   
+		if(perz .lt. 0) then
+		!this particle is going to the processor below
+		      LenLecOutDwn=LenLecOutDwn+1
+!		      poutdwn(LenIonOutDwn+LenLecOutDwn)=p(maxhlf+lecs)           
+		      call copyprt(p(maxhlf+lecs),poutdwn(LenIonOutDwn+LenLecOutDwn))
+
+!		   if(periodicz .eq. 0 .and. & 
+!                       ((p(maxhlf+lecs)%z +perz+ rank/sizey*(mzall-5).lt.z1in) &
+!                       .or.(p(maxhlf+lecs)%z+perz + rank/sizey*(mzall-5).gt.z2in)) ) then
+!			 LenLecOutDwn=LenLecOutDwn-1  !let the particle escape 
+!		   endif
+		endif
+	
+		if(perz .gt. 0) then
+			!this particle is going to the processor above
+			LenLecOutUp=LenLecOutUp+1
+!			poutup(LenIonOutUp+LenLecOutUp)=p(maxhlf+lecs)
+			call copyprt(p(maxhlf+lecs),poutup(LenIonOutUp+LenLecOutUp))
+
+!		   if(periodicz .eq. 0 .and. & 
+!                        ((p(maxhlf+lecs)%z+perz + rank/sizey*(mzall-5).lt.z1in) &
+!                     .or.(p(maxhlf+lecs)%z+perz+ rank/sizey*(mzall-5).gt.z2in)) ) then
+!			 LenLecOutUp=LenLecOutUp-1  !let the particle escape 
+!		   endif
+		endif
+	if(perz .ne. 0) then	
+		lecs=lecs-1	
+	endif	
+!end ifdef CORNER
+!#endif 
+#endif
+	enddo  !do n=1,LenLecInLft
+	
+	endif	!if(sizey .ne. 1)
+	
+	if(sizex .ne. 1) then
+
+	do n=1,LenIonInPlus
+		ions=ions+1
+		call copyprt(pinplus(n),p(ions))
+		
+!#ifdef CORNER
+         if(sizey .ne. 1) then 
+		pery=sign(.5*(my-5.),p(ions)%y-3.)+sign(.5*(my-5.),p(ions)%y-my+2.)
+		if(pery .lt. 0) then		
+			! left rank	(-y direction)	
+			j1=modulo(rank/sizex - 1,sizey)*sizex+rank/(sizex*sizey)*(sizex*sizey) &
+				+ modulo(rank,sizex) 
+			pery=-(myl(j1+1)-5.)				
+		endif
+		p(ions)%y=p(ions)%y-pery
+		if(pery .lt. 0) then
+			!this particle is going to the processor on the left
+			LenIonOutLft=LenIonOutLft+1
+!			poutlft(LenIonOutLft)=p(n1)
+			call copyprt(p(ions),poutlft(LenIonOutLft))
+!		   if(periodicy .eq. 0 .and. & 
+!                      ((p(n1)%y+pery + mycum .lt. y1in) &
+!                         .or.(p(n1)%y+pery+ mycum .gt. y2in)) ) then
+!			 LenIonOutLft=LenIonOutLft-1  !let the particle escape 
+!		   endif
+		endif
+		if(pery .gt. 0) then
+			!this particle is going to the processor on the right
+			LenIonOutRgt=LenIonOutRgt+1
+!			poutrgt(LenIonOutRgt)=p(n1)
+			call copyprt(p(ions),poutrgt(LenIonOutRgt))
+!		   if (periodicy .eq. 0 .and. & 
+!                     ((p(n1)%y+pery + mycum .lt. y1in) &
+!                  .or.(p(n1)%y+pery+ mycum .gt. y2in)) ) then
+!			 LenIonOutRgt=LenIonOutRgt-1  !let the particle escape 
+!		   endif
+		endif
+	if(pery .ne. 0) then	
+		ions=ions-1	
+	endif	
+!end hacking
+!end ifdef CORNER
+!#endif 
+        endif !if sizey ne 1
+	enddo !do n=1,LenIonInPlus
+
+	do n=1,LenIonInMinus
+		ions=ions+1
+		call copyprt(pinminus(n),p(ions))
+		
+!#ifdef CORNER
+           if(sizey .ne. 1) then 
+		pery=sign(.5*(my-5.),p(ions)%y-3.)+sign(.5*(my-5.),p(ions)%y-my+2.)
+		if(pery .lt. 0) then		
+			! left rank	(-y direction)	
+			j1=modulo(rank/sizex - 1,sizey)*sizex+rank/(sizex*sizey)*(sizex*sizey) &
+				+ modulo(rank,sizex) 
+			pery=-(myl(j1+1)-5.)				
+		endif
+		p(ions)%y=p(ions)%y-pery
+		if(pery .lt. 0) then
+			!this particle is going to the processor on the left
+			LenIonOutLft=LenIonOutLft+1
+!			poutlft(LenIonOutLft)=p(n1)
+			call copyprt(p(ions),poutlft(LenIonOutLft))
+!		   if(periodicy .eq. 0 .and. & 
+!                      ((p(n1)%y+pery + mycum .lt. y1in) &
+!                         .or.(p(n1)%y+pery+ mycum .gt. y2in)) ) then
+!			 LenIonOutLft=LenIonOutLft-1  !let the particle escape 
+!		   endif
+		endif
+
+		if(pery .gt. 0) then
+			!this particle is going to the processor on the right
+			LenIonOutRgt=LenIonOutRgt+1
+!			poutrgt(LenIonOutRgt)=p(n1)
+			call copyprt(p(ions),poutrgt(LenIonOutRgt))
+!		   if (periodicy .eq. 0 .and. & 
+!                     ((p(n1)%y+pery + mycum .lt. y1in) &
+!                  .or.(p(n1)%y+pery+ mycum .gt. y2in)) ) then
+!			 LenIonOutRgt=LenIonOutRgt-1  !let the particle escape 
+!		   endif
+		endif
+	if(pery .ne. 0) then	
+		ions=ions-1	
+	endif	
+ !end hacking
+ !end ifdef CORNER
+!#endif 		
+        endif !if sizey ne 1		
+	enddo	!do n=1,LenIonInMinus
+	
+	do n=1,LenLecInPlus
+		lecs=lecs+1
+		call copyprt(pinplus(LenIonInPlus+n),p(maxhlf+lecs))
+		
+!#ifdef CORNER
+         if(sizey .ne. 1) then      
+		pery=sign(.5*(my-5.),p(maxhlf+lecs)%y-3.)+sign(.5*(my-5.),p(maxhlf+lecs)%y-my+2.)
+		if(pery .lt. 0) then		
+			! left rank	(-y direction)	
+			j1=modulo(rank/sizex - 1,sizey)*sizex+rank/(sizex*sizey)*(sizex*sizey) &
+				+ modulo(rank,sizex) 
+			pery=-(myl(j1+1)-5.)				
+		endif
+		p(maxhlf+lecs)%y=p(maxhlf+lecs)%y-pery
+		if(pery .lt. 0) then
+			!this particle is going to the processor on the left
+			LenLecOutLft=LenLecOutLft+1
+		!	poutlft(LenIonOutLft+LenLecOutLft)=p(n1)
+			call copyprt(p(maxhlf+lecs),poutlft(LenIonOutLft+LenLecOutLft))
+!		   if(periodicy .eq. 0 .and. & 
+!                   ((p(n1)%y + pery + mycum .lt. y1in) &
+!                         .or.(p(n1)%y+ pery + mycum .gt. y2in)) ) then
+!                   LenLecOutLft=LenLecOutLft-1  !let the particle escape 
+!		   endif
+		endif
+		if(pery .gt. 0) then
+			!this particle is going to the processor on the right
+			LenLecOutRgt=LenLecOutRgt+1
+		!	poutrgt(LenIonOutRgt+LenLecOutRgt)=p(n1)
+			call copyprt(p(maxhlf+lecs),poutrgt(LenIonOutRgt+LenLecOutRgt))
+			
+!		   if(periodicy .eq. 0 .and. & 
+!                    ((p(n1)%y + pery + mycum .lt. y1in) &
+!                     .or.(p(n1)%y+ pery+ mycum .gt. y2in)) ) then
+!			 LenLecOutRgt=LenLecOutRgt-1  !let the particle escape 
+!		   endif
+		endif
+	if(pery .ne. 0) then	
+		lecs=lecs-1	
+	endif	
+!end hacking
+!end ifdef CORNER
+!#endif 
+        endif !if sizey ne 1		
+	enddo !do n=1,LenLecInPlus
+	
+	do n=1,LenLecInMinus
+		lecs=lecs+1
+		call copyprt(pinminus(LenIonInMinus+n),p(maxhlf+lecs))
+		
+!#ifdef CORNER
+          if(sizey .ne. 1) then 
+		pery=sign(.5*(my-5.),p(maxhlf+lecs)%y-3.)+sign(.5*(my-5.),p(maxhlf+lecs)%y-my+2.)
+		if(pery .lt. 0) then		
+			! left rank	(-y direction)	
+			j1=modulo(rank/sizex - 1,sizey)*sizex+rank/(sizex*sizey)*(sizex*sizey) &
+				+ modulo(rank,sizex) 
+			pery=-(myl(j1+1)-5.)				
+		endif
+		p(maxhlf+lecs)%y=p(maxhlf+lecs)%y-pery
+		if(pery .lt. 0) then
+			!this particle is going to the processor on the left
+			LenLecOutLft=LenLecOutLft+1
+		!	poutlft(LenIonOutLft+LenLecOutLft)=p(n1)
+			call copyprt(p(maxhlf+lecs),poutlft(LenIonOutLft+LenLecOutLft))
+!		   if(periodicy .eq. 0 .and. & 
+!                   ((p(n1)%y + pery + mycum .lt. y1in) &
+!                         .or.(p(n1)%y+ pery + mycum .gt. y2in)) ) then
+!                   LenLecOutLft=LenLecOutLft-1  !let the particle escape 
+!		   endif
+		endif
+		if(pery .gt. 0) then
+			!this particle is going to the processor on the right
+			LenLecOutRgt=LenLecOutRgt+1
+		!	poutrgt(LenIonOutRgt+LenLecOutRgt)=p(n1)
+			call copyprt(p(maxhlf+lecs),poutrgt(LenIonOutRgt+LenLecOutRgt))
+			
+!		   if(periodicy .eq. 0 .and. & 
+!                    ((p(n1)%y + pery + mycum .lt. y1in) &
+!                     .or.(p(n1)%y+ pery+ mycum .gt. y2in)) ) then
+!			 LenLecOutRgt=LenLecOutRgt-1  !let the particle escape 
+!		   endif
+		endif
+	if(pery .ne. 0) then	
+		lecs=lecs-1	
+	endif	
+!end hacking
+!end ifdef CORNER
+!#endif 
+         endif !if sizey ne 1		
+	enddo	!do n=1,LenLecInMinus
+
+	endif !if(sizex .ne. 1)
 	
 	if(rank.eq.0) time03=mpi_wtime()
 	
-	receivedions=lenioninabv+lenioninblw+lenioninrgt+lenioninlft
-	receivedlecs=lenlecinabv+lenlecinblw+lenlecinrgt+lenlecinlft
+	receivedions=lenioninabv+lenioninblw+lenioninrgt+lenioninlft+&
+				 lenioninplus+lenioninminus
+	receivedlecs=lenlecinabv+lenlecinblw+lenlecinrgt+lenlecinlft+&
+				 lenlecinplus+lenlecinminus
+
+!	print *, rank,": in InjO, a4", "lap",lap,  LenIonOutUp, LenIonOutDwn, LenLecOutUp, LenLecOutDwn	
 
 end subroutine inject_others
 
@@ -708,7 +1164,10 @@ subroutine exchange_particles()
 	integer ::arrsizeinlft(2),arrsizeinrgt(2)
 	integer ::rgtrank, lftrank,rgttag, lfttag, leninrgt, leninlft
 	
-
+	integer ::arrsizeoutplus(2),arrsizeoutminus(2), lenoutplus, lenoutminus
+	integer ::arrsizeinminus(2),arrsizeinplus(2)
+	integer ::plusrank, minusrank, plustag, minustag, leninplus, leninminus
+	
 	arrsizeup(1)=LenIonOutUp
 	arrsizeup(2)=LenLecOutUp
 	lenup=max((arrsizeup(1)+arrsizeup(2)),1)
@@ -716,12 +1175,16 @@ subroutine exchange_particles()
 	arrsizedwn(1)=LenIonOutDwn
 	arrsizedwn(2)=LenLecOutDwn
 	lendwn=max((arrsizedwn(1)+arrsizedwn(2)),1)
-	
-	uprank=modulo((rank/sizey + 1),sizez)*sizey + modulo(rank,sizey) 
-	dwnrank=modulo((rank/sizey - 1),sizez)*sizey + modulo(rank,sizey)
+
+#ifndef twoD
+	uprank=modulo((rank/(sizex*sizey) + 1),sizez)*(sizex*sizey) + & 
+		   modulo(rank,sizex*sizey) 
+	dwnrank=modulo((rank/(sizex*sizey) - 1),sizez)*(sizex*sizey) + & 
+		   modulo(rank,sizex*sizey) 
+	! in 2D, uprank=modulo(rank,sizey), dwnrank=modulo(rank,sizey)
 	uptag=100
 	dwntag=200
-	
+
 	!send the info about the size of the array
 	!send up and recv from below
 
@@ -756,8 +1219,8 @@ subroutine exchange_particles()
 	lenabv=max((LenIonInAbv+LenLecInAbv),1)
 	
 	if(lenblw .gt. buffsize .or. lenabv .gt. buffsize) then
-		print *, "ERROR: BUFFERSIZE SMALLER THAN PARTICLE LIST"
-		print *,rank,":","buffsize", buffsize, "lenblw",lenblw,"lenabv" &
+		print*, "ERROR: BUFFERSIZE SMALLER THAN PARTICLE LIST"
+		print*,rank,":","buffsize", buffsize, "lenblw",lenblw,"lenabv" &
 		,lenabv
 		stop
 	endif
@@ -782,10 +1245,12 @@ subroutine exchange_particles()
 #else
 		pinabv=poutdwn
 #endif
-	
-	!-------------------------------------
-	! now send and receive particles left and right
-	!-------------------------------------
+!end ifdef twoD	
+#endif 
+
+	!----------------------------------------------------------
+	! now send and receive particles left and right along the y direction
+	!----------------------------------------------------------
 	
 	arrsizeoutrgt(1)=LenIonOutRgt
 	arrsizeoutrgt(2)=LenLecOutRgt
@@ -794,11 +1259,14 @@ subroutine exchange_particles()
 	arrsizeoutlft(1)=LenIonOutLft
 	arrsizeoutlft(2)=LenLecOutLft
 	lenoutlft=max((arrsizeoutlft(1)+arrsizeoutlft(2)),1)
+
+	if(sizey .ne. 1) then
 	
-	rgtrank=(rank/sizey)*sizey + modulo(rank+1,sizey) 
-	!modulo(rank+1,size0)
-	lftrank=(rank/sizey)*sizey + modulo(rank-1,sizey) 
-	!modulo(rank-1,size0)
+	rgtrank=modulo(rank/sizex + 1,sizey)*sizex+rank/(sizex*sizey)*(sizex*sizey) &
+				+ modulo(rank,sizex) 
+	lftrank=modulo(rank/sizex - 1,sizey)*sizex+rank/(sizex*sizey)*(sizex*sizey) &
+				+ modulo(rank,sizex) 
+
 	rgttag=100
 	lfttag=200
 	
@@ -857,8 +1325,6 @@ subroutine exchange_particles()
 		pinlft=poutrgt
 #endif
 	
-	!send dwn and recv from above
-	!      print *,"lenup", lendwn, lenabv
 	
 #ifdef MPI   
 		call MPI_SendRecv(poutlft,lenoutlft,particletype,lftrank,lfttag, &
@@ -868,331 +1334,76 @@ subroutine exchange_particles()
 		pinrgt=poutlft
 #endif
 
-end subroutine exchange_particles
+	endif ! if(sizey .ne. 1)
 
-!-------------------------------------------------------------------------------
-! 						subroutine init_split_parts()					 
-!																		
-! Initialize splitting points for splitting routine
-!
-!-------------------------------------------------------------------------------
+	!----------------------------------------------------------
+	! now send and receive particles plus and minus (along the x direction)
+	!----------------------------------------------------------
+	
+	arrsizeoutplus(1)=LenIonOutPlus
+	arrsizeoutplus(2)=LenLecOutPlus
+	lenoutplus=max((arrsizeoutplus(1)+arrsizeoutplus(2)),1)
+	
+	arrsizeoutminus(1)=LenIonOutMinus
+	arrsizeoutminus(2)=LenLecOutMinus
+	lenoutminus=max((arrsizeoutminus(1)+arrsizeoutminus(2)),1)
+	
+	if(sizex .ne. 1) then
+	
+	plusrank=(rank/sizex)*sizex + modulo(rank+1,sizex) 
+	minusrank=(rank/sizex)*sizex + modulo(rank-1,sizex) 
+	plustag=100
+	minustag=200
+	
+	!send the info about the size of the array
+	!send up and recv from below
+	if(debug)print *,rank,": outplus",arrsizeoutplus
+
+	call MPI_SendRecv(arrsizeoutplus,2,mpi_integer,plusrank,plustag, &
+		arrsizeinminus,2,mpi_integer,minusrank,plustag, &
+		MPI_Comm_World,status,ierr)
+
+	!send dwn and recv from above
+	if(debug)print *,rank,": outminus",arrsizeoutminus
 
 
-subroutine init_split_parts()
-	integer n
+	call MPI_SendRecv(arrsizeoutminus,2,mpi_integer,minusrank,minustag, &
+		arrsizeinplus,2,mpi_integer,plusrank,minustag, &
+		MPI_Comm_World,status,ierr)
 
-	splitratio=10 ! 200 the splitratio should be high for nonrel shocks.
-		
-	splitoffs=.02
-	split_auto=1            ! 1 for auto adjustment of split thresholds
-	split_lap_start=2000
-	split_lap_rate=50
 	
-	split_prev_ions=0
-	split_prev_lecs=0
-	split_frac_ions = 1.0
-	split_frac_lecs = 1.0
-	split_gamma_res=200     ! number of logarithmic gamma bins in calculating split levels.
-	split_lgamma_m1_min=-2  ! log_10(gamma_min-1)
-	split_lgamma_m1_max=4   ! log_10(gamma_max-1)
-	split_min_ratio=1.001   ! minimal ratio betwen consecutive split thresholds. 
+	LenIonInMinus=arrsizeinminus(1)
+	LenLecInMinus=arrsizeinminus(2)
 	
-
-	!     Note that split_E(splitnmax) is never used.
-	!     Initialization below doesn't matter in auto-split mode.                                
-
-	split_E_ions(1)=1.0+20.0*(gamma0-1.0)          !10 !7
-	do n=2,splitnmax
-		split_E_ions(n)=1.0+(split_E_ions(n-1)-1.0)*2.0
-	enddo
-	split_E_lecs(1)=1.0+20.0*(gamma0-1.0)          !10 !7
-	do n=2,splitnmax
-		split_E_lecs(n)=1.0+(split_E_lecs(n-1)-1.0)*2.0
-	enddo
+	LenIonInPlus=arrsizeinplus(1)
+	LenLecInPlus=arrsizeinplus(2)
 	
-	if (rank .eq. size0-1) then
-		split_timer=mpi_wtime()
-	endif
-
-end subroutine init_split_parts
-
-!-------------------------------------------------------------------------------
-! 						subroutine split_parts()					 
-!																		
-! Splits particles in the simulation
-!
-!-------------------------------------------------------------------------------
-
-subroutine split_parts()
-
-	implicit none
-
-	! local variables
-
-	real deltay, gamma
-	integer ::tempions, templecs, n, nnew, ierr
-	! For auto split:
-	integer ::level, pos, new_ions, new_lecs, n1, n2, n_to_split, gpos
-	real(dprec) :: time01, time02, time03, time04, time05
+	leninminus=max((LenIonInMinus+LenLecInMinus),1)
+	leninplus=max((LenIonInPlus+LenLecInPlus),1)
 	
-	integer ::cur_level_nlecs(splitnmax)
-	integer ::cur_level_nlecs1(splitnmax)
-	
-	integer ::cur_level_nions(splitnmax)
-	integer ::cur_level_nions1(splitnmax)
-	
-	real gamma_avg_ions(splitnmax) 
-	real gamma_avg_ions1(splitnmax) 
-	
-	real gamma_avg_lecs(splitnmax) 
-	real gamma_avg_lecs1(splitnmax) 
-	
-	integer ::gamma_stat_ions(splitnmax,split_gamma_res)
-	integer ::gamma_stat_ions1(splitnmax,split_gamma_res)
-	
-	integer ::gamma_stat_lecs(splitnmax,split_gamma_res)
-	integer ::gamma_stat_lecs1(splitnmax,split_gamma_res)
-	
-	if (.not.splitparts) return
-	
-	if(lap .le. split_lap_start.or. modulo(lap, split_lap_rate) .ne. 0.or..not.splitparts) return 			
-	
-	if (rank .eq. size0-1) then
-		time01=mpi_wtime()
-		time02=time01
-		time03=time01
-		time04=time01
-	endif
-	
-	if (split_auto .eq. 1) then 
-		
-		!     Auto adjust split thresholds. Algorithm:
-		!     For each split level n1, adjust split threshold to assure a constant split rate. 
-		!     To do this, we need to first bin the present energy statistics. 
-		
-		!     Gather statistics of present split situation
-		do n1=1,splitnmax
-			cur_level_nions(n1)=0
-			cur_level_nlecs(n1)=0
-			gamma_avg_ions(n1)=0
-			gamma_avg_lecs(n1)=0
-			!     Note that we currently use gamma_avg only for statistics.
-			do n2=1,split_gamma_res
-				gamma_stat_ions(n1,n2)=0
-				gamma_stat_lecs(n1,n2)=0
-			enddo
-		enddo
-	
-		! for each level measure energy histogram and average gamma
-	
-		do n=1,ions
-			level=p(n)%splitlev
-			gamma=sqrt(1+(p(n)%u**2+p(n)%v**2+p(n)%w**2)) 
-			gpos = 1+floor(real(split_gamma_res-1)* &
-			(log10(gamma-1.0)-split_lgamma_m1_min)/ &
-			(split_lgamma_m1_max-split_lgamma_m1_min))
-			gpos = max(1,min(split_gamma_res,gpos)) 
-			cur_level_nions(level)=cur_level_nions(level)+1
-			gamma_stat_ions(level,gpos)=gamma_stat_ions(level,gpos)+1
-			gamma_avg_ions(level)=gamma_avg_ions(level)+gamma
-		enddo
-		do n=maxhlf+1, maxhlf+lecs
-			level=p(n)%splitlev
-			gamma=sqrt(1+(p(n)%u**2+p(n)%v**2+p(n)%w**2)) 
-			gpos = 1+floor(real(split_gamma_res-1)* &
-			(log10(gamma-1.0)-split_lgamma_m1_min)/ &
-			(split_lgamma_m1_max-split_lgamma_m1_min))
-			gpos = max(1,min(split_gamma_res,gpos)) 
-			cur_level_nlecs(level)=cur_level_nlecs(level)+1
-			gamma_stat_lecs(level,gpos)=gamma_stat_lecs(level,gpos)+1
-			gamma_avg_lecs(level)=gamma_avg_lecs(level)+gamma
-		enddo
-		
-		if (rank .eq. size0-1) then
-			time02=mpi_wtime()
-		endif
-		
-		! Gather info from all cpus
-		call mpi_allreduce(cur_level_nions,cur_level_nions1, &
-		splitnmax ,mpi_integer,mpi_sum,mpi_comm_world,ierr)
-		call mpi_allreduce(cur_level_nlecs,cur_level_nlecs1, &
-		splitnmax ,mpi_integer,mpi_sum,mpi_comm_world,ierr)
-		
-		call mpi_allreduce(gamma_avg_ions,gamma_avg_ions1,splitnmax, &
-		mpi_read,mpi_sum,mpi_comm_world,ierr)
-		call mpi_allreduce(gamma_avg_lecs,gamma_avg_lecs1,splitnmax, &
-		mpi_read,mpi_sum,mpi_comm_world,ierr)
-		
-		call mpi_allreduce(gamma_stat_ions,gamma_stat_ions1, &
-		splitnmax*split_gamma_res,mpi_integer,mpi_sum, &
-		mpi_comm_world,ierr)
-		call mpi_allreduce(gamma_stat_lecs,gamma_stat_lecs1, &
-		splitnmax*split_gamma_res,mpi_integer,mpi_sum, &
-		mpi_comm_world,ierr)
-		
-		if (rank .eq. size0-1) then
-			time03=mpi_wtime()
-		endif
-		
-		cur_level_nions=cur_level_nions1
-		cur_level_nlecs=cur_level_nlecs1
-		gamma_avg_ions=gamma_avg_ions1
-		gamma_avg_lecs=gamma_avg_lecs1
-		gamma_stat_ions=gamma_stat_ions1
-		gamma_stat_lecs=gamma_stat_lecs1
-		
-		do n1=1,splitnmax
-			gamma_avg_ions(n1)=gamma_avg_ions(n1)/ &
-			max(1.0,real(cur_level_nions(n1)))
-			gamma_avg_lecs(n1)=gamma_avg_lecs(n1)/ &
-			max(1.0,real(cur_level_nlecs(n1)))
-		enddo
-		
-		if (split_prev_ions .eq. 0 .and. split_prev_lecs .eq. 0) then
-			!     We never split before, split next cycle.
-			split_prev_ions = cur_level_nions(1)
-			split_prev_lecs = cur_level_nlecs(1)
-			
-		else 
-			! calculate split injection rate per level
-			new_ions = floor(real(cur_level_nions(1)-split_prev_ions) &
-			*split_frac_ions/real(splitratio*splitnmax))
-			new_lecs = floor(real(cur_level_nlecs(1)-split_prev_lecs) &
-			*split_frac_lecs/real(splitratio*splitnmax))
-			
-			split_prev_ions = cur_level_nions(1)
-			split_prev_lecs = cur_level_nlecs(1)
-			
-			! get ion thresholds such that n(>threshold)<new_ions
-			do n1=1,splitnmax-1
-				if (cur_level_nions(n1) .gt. 0) then ! there is something to split
-					n2=split_gamma_res
-					n_to_split=gamma_stat_ions(n1,n2)
-					do while (n_to_split .lt. new_ions .and. n2 .gt. 1)
-						n2=n2-1
-						n_to_split=n_to_split+gamma_stat_ions(n1,n2)
-					enddo
-					split_E_ions(n1) = 1.0+10.0**(split_lgamma_m1_min &
-					+(split_lgamma_m1_max-split_lgamma_m1_min) &
-					*real(n2)/real(split_gamma_res-1)) ! So new_split_E corresponds to gpos=1+floor(n2)
-					if (n1 .gt. 1) then ! Make sure we're not too close to threshold of lower level
-						split_E_ions(n1) = max(split_E_ions(n1),  &
-						1.0+(split_E_ions(n1-1)-1.0)*split_min_ratio)
-					endif
-				endif
-			enddo
-		
-			do n1=1,splitnmax-1
-				if (cur_level_nlecs(n1) .gt. 0) then ! there is something to split
-					n2=split_gamma_res
-					n_to_split=gamma_stat_lecs(n1,n2)
-					do while (n_to_split .lt. new_lecs .and. n2 .gt. 1)
-						n2=n2-1
-						n_to_split=n_to_split+gamma_stat_lecs(n1,n2)
-					enddo
-					split_E_lecs(n1) = 1.0+10.0**(split_lgamma_m1_min &
-					+(split_lgamma_m1_max-split_lgamma_m1_min) &
-					*real(n2)/real(split_gamma_res-1)) ! So new_split_E corresponds to gpos=1+floor(n2)
-					if (n1 .gt. 1) then
-						split_E_lecs(n1) = max(split_E_lecs(n1),  &
-						1.0+(split_E_lecs(n1-1)-1.0)*split_min_ratio)
-					endif
-					
-				endif
-			enddo
-			
-			if (rank .eq. size0-1) then 
-				do n1=1,splitnmax
-					if(n1 .eq. 1) then
-						print *,rank,": i-split stat ", ions,new_ions,lap
-						print *,rank,": e-split stat ", lecs,new_lecs,lap
-					endif
-					print *,rank,": i-split ",n1,cur_level_nions(n1), &
-					gamma_avg_ions(n1),split_E_ions(n1)
-					print *,rank,": e-split ",n1,cur_level_nlecs(n1), &
-					gamma_avg_lecs(n1),split_E_lecs(n1)
-				enddo
-			endif
-		
-		endif                  ! else { if (split_prev_lecs .eq. 0 .and. split_prev_ions .eq. 0) }
-	endif                     ! if (split_auto .eq. 1) then 
-	
-	if (rank .eq. size0-1) then
-		time04=mpi_wtime()
-	endif
-	
-	tempions=ions
-	templecs=lecs
-	do n=1,ions
-		
-		gamma=sqrt(1+(p(n)%u**2+p(n)%v**2+p(n)%w**2)) 
-		if(gamma .gt. split_E_ions(p(n)%splitlev) .and. p(n)%splitlev  &
-		.lt. splitnmax) then
-			!split particles
-			p(n)%splitlev=p(n)%splitlev+1
-			do nnew=1, splitratio-1
-				tempions=tempions+1
-				p(tempions)=p(n)
-				deltay=splitoffs*(2*random(dseed)-1) !check if falling outside
-				p(tempions)%y=p(tempions)%y+deltay
-				deltay=splitoffs*(2*random(dseed)-1) !check if falling outside
-				p(tempions)%x=p(tempions)%x+deltay
-			enddo
-			!            p(n)%splitlev=p(n)%splitlev-1 !to retain orig charge. testing
-		endif
-	
-	enddo
-	
-	do n=maxhlf+1, maxhlf+lecs
-		gamma=sqrt(1+(p(n)%u**2+p(n)%v**2+p(n)%w**2)) 
-		if(gamma .gt. split_E_lecs(p(n)%splitlev) .and. p(n)%splitlev &
-		.lt. splitnmax) then
-			!split particles
-			
-			if(rank .eq. size0-1) print *, "splitting e 0", p(n)%x, p(n)%y
-			
-			p(n)%splitlev=p(n)%splitlev+1
-			do nnew=1, splitratio-1
-				templecs=templecs+1
-				p(maxhlf+templecs)=p(n)
-				deltay=splitoffs*(2*random(dseed)-1) !check if falling outside
-				p(maxhlf+templecs)%y=p(maxhlf+templecs)%y+deltay
-				deltay=splitoffs*(2*random(dseed)-1) !check if falling outside
-				p(maxhlf+templecs)%x=p(maxhlf+templecs)%x+deltay
-				
-				if(rank .eq. size0-1)  print *, "splitting e", gamma, &
-				deltay, p(maxhlf+templecs)%x, p(maxhlf+templecs)%y
-				!add a call to zigzag here 
-			enddo
-			
-			!            p(n)%splitlev=p(n)%splitlev-1 !to retain orig charge. testing
-		endif
-	
-	enddo
-	
-	print *,rank, ": Released ",tempions-ions,templecs-lecs &
-	," particles" 
-	
-	if (rank .eq. size0-1) then
-	time05=mpi_wtime()
-		print *,rank, "split ", time05-time01, " sec total"
-		print *,rank, "split ", time04-time01, " sec auto split"
-		print *,rank, "split ", time03-time02, " sec mpi allreduce"        
-		print *,rank, "split ", (time05-time01)/(time05-split_timer), &
-		" of the time"
-		split_timer=time05 
-	endif
-	
-	ions=tempions
-	lecs=templecs
-	print *, rank, ": last ind", p(ions)%splitlev, p(lecs)%splitlev
-	if(ions .gt. maxhlf .or. lecs .gt. maxhlf) then
-		print *,rank,": OVERFLOW in split_parts ions,lecs,maxhlf",ions &
-		,lecs,maxhlf
+	if(leninminus .gt. buffsize .or. leninplus .gt. buffsize) then
+		print *, "ERROR: BUFFERSIZE SMALLER THAN PARTICLE LIST"
+		print *,rank,":","buffsize", buffsize, "leninminus",leninminus &
+		,"leninplus",leninplus
 		stop
 	endif
 
-end subroutine split_parts
+	!send and receive particle arrays
+	!send up and recv from below
+	
+	if(debug)print *,rank,"lenoutplus",lenoutplus,"leninminus",leninminus
+
+	call MPI_SendRecv(poutplus,lenoutplus,particletype,plusrank,plustag, &
+		pinminus,leninminus,particletype,minusrank,plustag, &
+		MPI_Comm_World,status,ierr)
+   
+	call MPI_SendRecv(poutminus,lenoutminus,particletype,minusrank,minustag, &
+		pinplus,leninplus,particletype,plusrank,minustag, &
+		MPI_Comm_World,status,ierr)
+
+	endif ! if(sizex .ne.1)
+	
+end subroutine exchange_particles
 
 
 !-------------------------------------------------------------------------------
@@ -1211,18 +1422,21 @@ subroutine init_maxw_table(delgam, gamma_table, pdf_table)
 	!delgam in the input file sets the temperature in delta gamma, here it is converted 
 	!between species by multiplying by mass.
 	
-	maxg=max(delgam,1e-8)*20+1. !20 times the temperature is usually enough, unless the temperature is tiny
+	maxg=(delgam)*20+1. !20 times the temperature is usually enough
 	
 	do i=1,pdf_sz
-		gamma_table(i)=(maxg-1.)/(pdf_sz-1)*(i-1)+1.
+		gamma_table(i)=(maxg-1.)/(pdf_sz-1)*(i-1)!+1. remove 1. from definition to avoid underflows. 
 	enddo
 	
 #ifndef twoD
-	func=gamma_table*sqrt(gamma_table**2-1)*exp(-(gamma_table-1)/delgam)
+! a safer way of writing gamma*sqrt(gamma^2-1)*exp(-(gamma-1)/delgam) -- no underflows
+	func=(gamma_table+1.)*sqrt(gamma_table*(gamma_table+2.))*exp(-(gamma_table)/delgam) !3D distribution
 #else
-	func=gamma_table*exp(-(gamma_table-1)/delgam)
-	! if magnetized shocks, initialize a full 3d distribution
-	if (sigma .ne. 0) func=gamma_table*sqrt(gamma_table**2-1)*exp(-(gamma_table-1)/delgam) 	
+!	if(pcosthmult .eq. 0) func=gamma_table*exp(-(gamma_table-1)/delgam)
+ 	if(pcosthmult .eq. 0) func=(gamma_table+1.)*exp(-(gamma_table)/delgam)
+! if magnetized shocks, initialize a full 3d distribution
+!	if(pcosthmult .eq. 1) func=gamma_table*sqrt(gamma_table**2-1)*exp(-(gamma_table-1)/delgam) 	
+	if(pcosthmult .eq. 1) func=(gamma_table+1.)*sqrt(gamma_table*(gamma_table+2.))*exp(-(gamma_table)/delgam) 	
 #endif
 	
 	pdf_table(1)=0.
@@ -1272,7 +1486,7 @@ subroutine maxwell_dist(gamma0, cd, dseed, u,v,w,gamma_table,pdf_table,pdf_sz)
 	
 	i=1
 	flag=.true.
-	gam=1.
+	gam=0. !gam = gamma-1., only kinetic energy to avoid underflows.
 	!choose gamma from the table
 	do while (flag)
 		
@@ -1302,22 +1516,23 @@ subroutine maxwell_dist(gamma0, cd, dseed, u,v,w,gamma_table,pdf_table,pdf_sz)
 	pphi=random(dseed)*2*pi
 	psinth=sqrt(1-pcosth**2)
 	
-	v0t=cd*sqrt((gam-1)*(gam+1))/gam !*sqrt(1.-1./gam**2)
+!	v0t=cd*sqrt((gam-1)*(gam+1))/gam !*sqrt(1.-1./gam**2)
+	v0t=cd*sqrt((gam)*(gam+2.))/(1.+gam) !*sqrt(1.-1./gam**2)
 	
 	ut1=v0t*psinth*cos(pphi)
 	vt1=v0t*psinth*sin(pphi)
 	wt1=v0t*pcosth
 	
-	ptx=gam*ut1
-	pty=gam*vt1
-	ptz=gam*wt1
+	ptx=(1.+gam)*ut1
+	pty=(1.+gam)*vt1
+	ptz=(1.+gam)*wt1
 	
-	px1=(ptx+v0*gam)*gamma0 !this will include the sign of gamma0
+	px1=(ptx+v0*(gam+1.))*gamma0 !this will include the sign of gamma0
  	py1=pty
 	pz1=ptz
 	
 	gam1=sqrt(1+(px1**2+py1**2+pz1**2)/cd**2)
-	u=px1/cd                  
+	u=px1/cd                 
 	v=py1/cd                  
 	w=pz1/cd                  
 	
@@ -1402,14 +1617,26 @@ end subroutine powerlaw3d
 !-------------------------------------------------------------------------------
 
 subroutine inject_from_wall(x1,x2,y1,y2,z1,z2,ppc,gamma_drift,delgam_i,delgam_e,&
-	wall_speed,weight,use_density_profile)
+	wall_speed,weight,upsamp_e_in,upsamp_i_in)
 	implicit none
-	real(dprec):: x1,x2,xt,y1,y2,z1,z2, x1new,x2new
-	real(dprec):: y1new,y2new, z1new, z2new
+	real(sprec):: x1,x2,xt,y1,y2,z1,z2, x1new,x2new
+	real(sprec):: y1new,y2new, z1new, z2new
 
 	real ppc,delgam_i,delgam_e,beta_inj,gamma_drift,wall_speed,beta_wall,weight
-	logical use_density_profile
 	integer direction
+	integer, optional :: upsamp_e_in, upsamp_i_in
+        integer :: upsamp_e, upsamp_i
+
+	if(.not. present(upsamp_e_in)) then 
+	   upsamp_e = 1
+	else
+	   upsamp_e = upsamp_e_in
+	endif
+	if(.not. present(upsamp_i_in)) then
+	   upsamp_i = 1
+	else
+	   upsamp_i = upsamp_i_in
+	endif
 
 	if(abs(wall_speed) .ge. 1) then 
 	   beta_wall=sign(sqrt(1-1/wall_speed**2),wall_speed) !if wall_speed > 1, it is interpreted as gamma of wall
@@ -1486,7 +1713,7 @@ subroutine inject_from_wall(x1,x2,y1,y2,z1,z2,ppc,gamma_drift,delgam_i,delgam_e,
 	endif
 
 	call inject_plasma_region(x1new,x2new,y1new,y2new,z1new,z2new,ppc,gamma_drift,delgam_i,delgam_e,&
-           weight,use_density_profile,direction)
+           weight,direction,upsamp_e,upsamp_i)
 
 end subroutine inject_from_wall
 
@@ -1500,31 +1727,60 @@ end subroutine inject_from_wall
 !-------------------------------------------------------------------------------
 
 subroutine inject_plasma_region(x1,x2,y1,y2,z1,z2,ppc,gamma_drift_in, &
-          delgam_i,delgam_e,weight,use_density_profile,direction)
+          delgam_i,delgam_e,weight,direction,upsamp_e_in,upsamp_i_in)
 	implicit none
 
-	real(dprec):: x1,x2,y1,y2,z1,z2 !to accurately calculate differences between x-s, which may be >64k, use doubles
+	real(sprec):: x1,x2,y1,y2,z1,z2 !to accurately calculate differences between x-s, which may be >64k, use doubles
 	real ppc,delgam_i,delgam_e,gamma_drift,gamma_drift_in,weight
 	logical use_density_profile
-	integer direction
+	integer direction, ions0, ions1, n1
 
-	real(dprec), dimension(3) :: values
+	real(sprec), dimension(3) :: values
 
+	real dx, dy, dz, len !hack
+	
 !tables for pre-computed maxwellian distributions. Can add more here
 	real, dimension(pdf_sz) :: pdf_table_i, gamma_table_i, pdf_table_e, gamma_table_e
 
-	integer :: i, n, jglob_min, jglob_max
-	real :: minx, maxx, miny, maxy, inject_miny, inject_maxy, delta_y, minz, maxz, delta_z, delta_x,numps, tmp
+	integer :: i, n, iglob_min, iglob_max, jglob_min, jglob_max
+	real :: minz, maxz, delta_z, numps, tmp
+	real(sprec) :: minx, maxx, miny, maxy, inject_minx, inject_maxx, inject_miny, inject_maxy, delta_y, delta_x
+
 #ifndef twoD
 	integer :: kglob_min, kglob_max
 	real :: inject_minz, inject_maxz
 #endif
 
+	integer downsmp, subsamp, ionsdwn, ionindx !hack for downsmp
+	integer ne, ni
+	real corrfact
+	integer, optional, intent(in) :: upsamp_e_in, upsamp_i_in
+	integer :: upsamp_e,upsamp_i
+
+	real gammaprt, gammaperp, betaxprt, corrweight, beta_drift
+
+	if(.not. present(upsamp_e_in)) then 
+	   upsamp_e = 1
+	else
+	   upsamp_e = upsamp_e_in
+	endif
+	if(.not. present(upsamp_i_in)) then
+	   upsamp_i = 1
+	else
+	   upsamp_i = upsamp_i_in
+	endif
+
+	if(upsamp_e < 1) then 
+	   print *,"upsamp_e<1. Reduce ppc. Stopping!"
+	   stop
+	endif
+	
 	 if(abs(gamma_drift_in) .lt. 1) then
 	    gamma_drift=sign(sqrt(1./(1.-gamma_drift_in**2)),gamma_drift_in) !gamma_drift_in can be used as velocity/c, to simplify non-relativistic drift assignment.
 	 else
 	    gamma_drift=gamma_drift_in
 	 endif
+	 
 
 ! init_maxw assumes dimensionality of the Maxwellian based on the dimensionality of simulation
 ! and whether B field is non-zero (then you can have 3D maxwellians even in 2D). 
@@ -1536,13 +1792,38 @@ subroutine inject_plasma_region(x1,x2,y1,y2,z1,z2,ppc,gamma_drift_in, &
 
 !	call init_maxw_table(1e-4*mi/me, gamma_table_cold, pdf_table_cold)
 
+
+	iglob_min=3+mxcum
+	iglob_max=(mx-2)+mxcum		
+		
+	minx=3.
+	maxx=3.
 	
-	jglob_min=3+modulo(rank,sizey)*(myall-5.) !global extent of the y boundaries on this processor
-	jglob_max=(my-2)+modulo(rank,sizey)*(myall-5.)
-
-	minx=max(x1,3.)
-	maxx=min(x2,mx0-2.)
-
+	if(x2 < x1) then 
+	   print *, rank, ": Inject_Plasma_Region. x2 < x1. x1=",x1," x2=",x2 
+	   stop
+	endif
+	
+	inject_minx=x1
+	inject_maxx=x2
+	
+	if(inject_minx<iglob_min) minx=3.
+	if(inject_maxx<iglob_min) maxx=3.
+	if(inject_minx>=iglob_max) minx=mx-2
+	if(inject_maxx>=iglob_max) maxx=mx-2
+	
+	if(inject_minx>=iglob_min .and. inject_minx<iglob_max) then
+	   minx=inject_minx-1.*mxcum
+	endif
+	if(inject_maxx>=iglob_min .and. inject_maxx<iglob_max) then
+	   maxx=inject_maxx-1.*mxcum
+	endif
+	
+	delta_x=(maxx-minx)
+	
+	jglob_min=3+mycum !global extent of the y boundaries on this processor
+	jglob_max=(my-2)+mycum
+	
 	miny=3.
 	maxy=3.
 	
@@ -1553,6 +1834,10 @@ subroutine inject_plasma_region(x1,x2,y1,y2,z1,z2,ppc,gamma_drift_in, &
 	
 	inject_miny=y1
 	inject_maxy=y2
+	
+	! inject_miny and inject_maxy are global coordinates
+	! jglob_min and jglob_max are global coordinates
+	! minx and miny are local coordinates
 
 	if(inject_miny<jglob_min) miny=3.
 	if(inject_maxy<jglob_min) maxy=3.
@@ -1560,11 +1845,10 @@ subroutine inject_plasma_region(x1,x2,y1,y2,z1,z2,ppc,gamma_drift_in, &
 	if(inject_maxy>=jglob_max) maxy=my-2
 
 	if(inject_miny>=jglob_min .and. inject_miny<jglob_max) then
-	   miny=inject_miny-modulo(rank,sizey)*(myall-5.)
+	   miny=inject_miny-mycum
 	endif
-
 	if(inject_maxy>=jglob_min .and. inject_maxy<jglob_max) then
-	   maxy=inject_maxy-modulo(rank,sizey)*(myall-5.)
+	   maxy=inject_maxy-mycum
 	endif
 
 	delta_y=(maxy-miny)
@@ -1577,14 +1861,7 @@ subroutine inject_plasma_region(x1,x2,y1,y2,z1,z2,ppc,gamma_drift_in, &
 		miny=0
 	endif
 	
-	!now for x
-	if(x2 < x1) then 
-	   print *, rank, ": In inject_Plasma_Region. x2 < x1. x1=",x1," x2=",x2 
-	   stop
-	endif
-	
-	delta_x=x2-x1
-	
+	 
 #ifdef twoD
 	maxz=4.
 	minz=3.
@@ -1593,11 +1870,11 @@ subroutine inject_plasma_region(x1,x2,y1,y2,z1,z2,ppc,gamma_drift_in, &
 	
 #ifndef twoD
 
-	kglob_min=3+(rank/sizey)*(mzall-5)
-	kglob_max=(mz-2)+(rank/sizey)*(mzall-5)
-
-	minz=0
-	maxz=0
+	kglob_min=3+mzcum !global extent of the y boundaries on this processor
+	kglob_max=(mz-2)+mzcum
+	
+	minz=3.
+	maxz=3.
 	
 	if(z2 < z1) then 
 	   print *, rank, ": In inject_Plasma_Region. z2 < z1. z1=",z1," z2=",z2 
@@ -1609,15 +1886,17 @@ subroutine inject_plasma_region(x1,x2,y1,y2,z1,z2,ppc,gamma_drift_in, &
 
 	if(inject_minz<kglob_min) minz=3.
 	if(inject_maxz<kglob_min) maxz=3.
-	if(inject_minz>=kglob_max) minz=mz-2
-	if(inject_maxz>=kglob_max) maxz=mz-2
+	if(inject_minz>=kglob_max) minz=mz-2.
+	if(inject_maxz>=kglob_max) maxz=mz-2.
 
 	if(inject_minz>=kglob_min .and. inject_minz<kglob_max) then
-	   minz=inject_minz-(rank/sizey)*(mzall-5)
+!	   minz=inject_minz-rank/(sizex*sizey)*(mzall-5)
+	   minz=inject_minz-mzcum
 	endif
 
 	if(inject_maxz>=kglob_min .and. inject_maxz<kglob_max) then
-	   maxz=inject_maxz-(rank/sizey)*(mzall-5)
+!	   maxz=inject_maxz-rank/(sizex*sizey)*(mzall-5)
+	   maxz=inject_maxz-mzcum
 	endif
 
 	delta_z=(maxz-minz)
@@ -1639,10 +1918,16 @@ subroutine inject_plasma_region(x1,x2,y1,y2,z1,z2,ppc,gamma_drift_in, &
 	numps=(.5*ppc)*delta_z*delta_y*delta_x
 
 	if(numps < 10) then 
-	   numps=poisson(numps)
+	   if(numps .ne. 0.) then 
+	      numps=poisson(numps)
+	   else
+	      numps=0. !avoid unlikely event of poisson returning nonzero number for numps=0
+	   endif
 	else 
 	   numps=ceiling(numps)
 	endif
+
+	ions0=ions
 
 	call check_overflow_num(numps)	
 
@@ -1650,72 +1935,174 @@ subroutine inject_plasma_region(x1,x2,y1,y2,z1,z2,ppc,gamma_drift_in, &
 		
 		n=n+1
 		ions=ions+1
-		lecs=lecs+1
 
-		!  Add some random spread to these regular spacings:
+		!  Add some random spread:
 		
-		p(ions)%x=minx+delta_x * random(dseed) !revers(n,3) 
+		p(ions)%x=minx+delta_x * random(dseed) 
 		p(ions)%y=miny+delta_y * random(dseed) 
 		p(ions)%z=minz+delta_z * random(dseed) 
 		
-		!  Place electrons in the same locations as ions for zero charge
-		!  density (consistent with zero or uniform inital electric fields):
-		p(maxhlf+lecs)%x=p(ions)%x
-		p(maxhlf+lecs)%y=p(ions)%y
-		p(maxhlf+lecs)%z=p(ions)%z
+		call maxwell_dist(gamma_drift,c,dseed,p(ions)%u,p(ions)%v,p(ions &
+		)%w,gamma_table_i, pdf_table_i,pdf_sz ) ! , 0., 1.)	
 
 		p(ions)%ch=weight 
-		p(maxhlf+lecs)%ch=weight
-		
-		if (use_density_profile) then
-			values(1)=(p(ions)%x-3.)/c_omp
-			values(2)=((p(ions)%y+modulo(rank,sizey)*(myall-5)) -3.)/c_omp
-			values(3)=((p(ions)%z+(rank/sizey)*(mzall-5))-3.)/c_omp
-			p(ions)%ch=evalf(1,values)
-			p(maxhlf+lecs)%ch=evalf(1,values)
-		endif
-
-		call maxwell_dist(gamma_drift,c,dseed,p(ions)%u,p(ions)%v,p(ions &
-		)%w,gamma_table_i, pdf_table_i,pdf_sz)	
 	
-		call maxwell_dist(gamma_drift,c,dseed,p(lecs+maxhlf)%u,p(lecs+maxhlf)%v,p(lecs &
-		+maxhlf)%w,gamma_table_e, pdf_table_e,pdf_sz)	
-
 		if(direction.eq.2)then
 		   tmp=p(ions)%u
 		   p(ions)%u=p(ions)%v
 		   p(ions)%v=tmp
-
-		   tmp=p(maxhlf+lecs)%u
-		   p(maxhlf+lecs)%u=p(maxhlf+lecs)%v
-		   p(maxhlf+lecs)%v=tmp
 		endif
 
 		if(direction.eq.3)then
 		   tmp=p(ions)%u
 		   p(ions)%u=p(ions)%w
 		   p(ions)%w=tmp
-
-		   tmp=p(maxhlf+lecs)%u
-		   p(maxhlf+lecs)%u=p(maxhlf+lecs)%w
-		   p(maxhlf+lecs)%w=tmp
 		endif
+
+		beta_drift=sign(sqrt(1.-1./gamma_drift**2),gamma_drift)
+
+		gammaprt=sqrt(1.+p(ions)%u**2+p(ions)%v**2+p(ions)%w**2)
+		gammaperp=1.+p(ions)%v**2+p(ions)%w**2
+		betaxprt=p(ions)%u/gammaprt
+		corrweight=gammaprt**2*(1.+beta_drift*betaxprt)/ &
+		(gammaprt**2+gammaperp*gamma_drift**2-gammaperp)
+		p(ions)%ch=p(ions)%ch*corrweight
+
 
 		totalpartnum =totalpartnum+1
 		p(ions)%ind=totalpartnum
 		p(ions)%proc=rank
 		p(ions)%splitlev=1
-		totalpartnum =totalpartnum+1
-		p(maxhlf+lecs)%ind=totalpartnum
-		p(maxhlf+lecs)%proc=rank
-		p(maxhlf+lecs)%splitlev=1
-	enddo
+
+		if (use_density_profile) then
+			values(1)=(p(ions)%x-3.)/c_omp
+			values(2)=((p(ions)%y+modulo(rank,sizey)*(myall-5)) -3.)/c_omp
+			values(3)=((p(ions)%z+(rank/sizey)*(mzall-5))-3.)/c_omp
+			p(ions)%ch=evalf(1,real(values,8))
+		endif
+
+
+		!  Place electrons in the same locations as ions for zero charge
+		!  density (consistent with zero or uniform inital electric fields):
+
+
+
+		ne=0
+		do while (ne < upsamp_e)
+		   ne=ne+1
+		   lecs=lecs+1
+
+		   p(maxhlf+lecs)%x=p(ions)%x 
+		   p(maxhlf+lecs)%y=p(ions)%y
+		   p(maxhlf+lecs)%z=p(ions)%z
+
+		   p(maxhlf+lecs)%ch=weight/upsamp_e
+
+		if (use_density_profile) then
+			values(1)=(p(ions)%x-3.)/c_omp
+			values(2)=((p(ions)%y+modulo(rank,sizey)*(myall-5)) -3.)/c_omp
+			values(3)=((p(ions)%z+(rank/sizey)*(mzall-5))-3.)/c_omp
+			p(maxhlf+lecs)%ch=evalf(1,real(values,8))
+		endif
+	
+		   call maxwell_dist(gamma_drift,c,dseed,p(lecs+maxhlf)%u,p(lecs+maxhlf)%v,p(lecs &
+		   +maxhlf)%w,gamma_table_e, pdf_table_e,pdf_sz) !, 0., 1.)	
+
+		   if(direction.eq.2)then
+		      tmp=p(maxhlf+lecs)%u
+		      p(maxhlf+lecs)%u=p(maxhlf+lecs)%v
+		      p(maxhlf+lecs)%v=tmp
+		   endif
+
+		   if(direction.eq.3)then
+		      tmp=p(maxhlf+lecs)%u
+		      p(maxhlf+lecs)%u=p(maxhlf+lecs)%w
+		      p(maxhlf+lecs)%w=tmp
+		   endif
+
+		beta_drift=sign(sqrt(1.-1./gamma_drift**2),gamma_drift)
+
+		gammaprt=sqrt(1.+p(lecs+maxhlf)%u**2+p(lecs+maxhlf)%v**2+p(lecs+maxhlf)%w**2)
+		gammaperp=1.+p(lecs+maxhlf)%v**2+p(lecs+maxhlf)%w**2
+		betaxprt=p(lecs+maxhlf)%u/gammaprt
+		corrweight=gammaprt**2*(1.+beta_drift*betaxprt)/ &
+		(gammaprt**2+gammaperp*gamma_drift**2-gammaperp)
+		p(maxhlf+lecs)%ch=p(maxhlf+lecs)%ch*corrweight
+
+		   totalpartnum =totalpartnum+1
+		   p(maxhlf+lecs)%ind=totalpartnum
+		   p(maxhlf+lecs)%proc=rank
+		   p(maxhlf+lecs)%splitlev=1
+
+		enddo
+
+	     enddo
 
 		injectedions=injectedions+n
-		injectedlecs=injectedlecs+n
-	
-end subroutine inject_plasma_region
+		injectedlecs=injectedlecs+ne
 
+		ions1=ions
+
+!now go through all ions I just created and split them
+		if(upsamp_i .ne. 1) print *, "upsamp_i", upsamp_i
+		if(upsamp_i > 1) then 
+		   n=ions0
+		   do while(n <= ions1) ! go through all injected ions
+		      n1=n
+		      if( p(n1)%ch .gt. .7 ) then !check if the ion is up for splitting; all should be here
+			 ni=0
+			 do while (ni < upsamp_i)
+			    ni=ni+1
+			    ions=ions+1
+			    call copyprt(p(n1), p(ions))
+			    p(ions)%ch=p(ions)%ch/upsamp_i
+
+			    call maxwell_dist(gamma_drift,c,dseed,p(ions)%u,p(ions)%v,p(ions &
+			    )%w,gamma_table_i, pdf_table_i,pdf_sz ) ! , 0., 1.)	
+			    
+			    if(direction.eq.2)then
+			       tmp=p(ions)%u
+			       p(ions)%u=p(ions)%v
+			       p(ions)%v=tmp
+			    endif
+
+			    if(direction.eq.3)then
+			       tmp=p(ions)%u
+			       p(ions)%u=p(ions)%w
+			       p(ions)%w=tmp
+			    endif
+
+			    beta_drift=sign(sqrt(1.-1./gamma_drift**2),gamma_drift) 
+
+			    gammaprt=sqrt(1.+p(ions)%u**2+p(ions)%v**2+p(ions)%w**2) 
+			    gammaperp=1.+p(ions)%v**2+p(ions)%w**2 !this assumes drift in x only
+			    betaxprt=p(ions)%u/gammaprt
+			    corrweight=gammaprt**2*(1.+beta_drift*betaxprt)/ &
+			    (gammaprt**2+gammaperp*gamma_drift**2-gammaperp)
+			    p(ions)%ch=p(ions)%ch*corrweight
+
+
+			    totalpartnum =totalpartnum+1
+			    p(ions)%ind=totalpartnum
+			    p(ions)%proc=rank
+			    p(ions)%splitlev=1
+
+			 enddo
+			    
+!remove the original high weight ion
+			 call copyprt(p(ions),p(n1))
+			 ions=ions-1
+			 n=n-1
+!			 totalpartnum=totalpartnum -1 
+		      endif	!if ch > .7
+		      
+		      n=n+1
+		   enddo	!while n < ions
+		   
+		endif		!if upsamp_i > 1
+
+		
+end subroutine inject_plasma_region
 
 
 

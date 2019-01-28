@@ -1,0 +1,13 @@
+#!/bin/sh
+#$ -l h_cpu=24:00:00
+#$ -cwd
+##$ -P mhd
+#$ -pe mpi 8
+##/usr/mpi/pgi/openmpi-1.2.8/bin/mpirun tristan-mp2d
+source /etc/profile.d/modules.sh add mpi/openmpi/2.0.1/intel-17.0.0
+
+export PATH=$PATH":/data/cs1mkg/lib/hdf5/lib:/usr/local/packages/mpi/openmpi/2.0.1/intel-17.0.0/bin:/usr/local/packages/mpi/openmpi/2.0.1/intel-17.0.0/lib"
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH":/data/cs1mkg/lib/hdf5/lib:/usr/local/packages/mpi/openmpi/2.0.1/intel-17.0.0/lib:/usr/local/packages/mpi/openmpi/2.0.1/intel-17.0.0/lib:/usr/local/packages/dev/intel-ps-xe-ce/2017.0/binary/compilers_and_libraries_2017.0.098/linux/compiler/lib/intel64_lin:/usr/local/packages/dev/intel-ps-xe-ce/2017.0/binary/compilers_and_libraries_2017.0.098/linux/ipp/lib/intel64:/usr/local/packages/dev/intel-ps-xe-ce/2017.0/binary/compilers_and_libraries_2017.0.098/linux/compiler/lib/intel64:/usr/local/packages/dev/intel-ps-xe-ce/2017.0/binary/compilers_and_libraries_2017.0.098/linux/mkl/lib/intel64:/usr/local/packages/dev/intel-ps-xe-ce/2017.0/binary/compilers_and_libraries_2017.0.098/linux/tbb/lib/intel64/gcc4.7:/usr/local/packages/dev/intel-ps-xe-ce/2017.0/binary/debugger_2017/iga/lib:/usr/local/packages/dev/intel-ps-xe-ce/2017.0/binary/debugger_2017/libipt/intel64/lib:/usr/local/packages/dev/intel-ps-xe-ce/2017.0/binary/compilers_and_libraries_2017.0.098/linux/daal/lib/intel64_lin"
+
+#module load mpi/openmpi/2.0.1/intel-17.0.0
+mpirun -np 8 tristan-mp2d

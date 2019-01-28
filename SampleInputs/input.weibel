@@ -1,4 +1,4 @@
-#
+
 #
 #	Tristan-mp input file
 #
@@ -6,57 +6,59 @@
 
 <node_configuration>
 
-sizey 	= 64				# number of cpus in the y direction
+sizex	= 1                    # number of cpus in x direction
+sizey 	= 1			# number of cpus in the y direction
 
 <time>
 
-last 	= 30000			# last timestep
+last 	= 6000000		# last timestep
 
 c	= .45			# velocity of light in comp. units (this defines the timestep)
 
-timespan= 86400			# time, in seconds, available to run the problem
+timespan= 60000000 		# time, in seconds, available to run the problem, 
+                                # to not save restart before the end
 
 <grid>
 
-mx0 	= 1000 			# number of actual grid points in the x direction
-my0 	= 256 			# number of actual grid points in the y direction
+mx0 	= 128 		# number of actual grid points in the x direction
+my0 	= 128			# number of actual grid points in the y direction
+
 mz0 	= 1 			# ... (ignored for 2D simulations)
 
 <algorithm>
 
-conserv 	= 1            # charge-conservative current deposition -- the only available option
-highorder	= 1	       # 0 -- 2nd order FDTD field integrateion; 1 -- 4th order; 
+highorder	= 0	       # 0 -- 2nd order FDTD field integrateion; 1 -- 4th order; 
                                # don't use 1 for non-relativistic flows 
 
 Corr		= 1.025	       # correction for the speed of light
-
-ntimes		= 4		# number of passes for smoothing filter (current)
-cleanfld	= 0		# number of passes for smoothing filter (fields). don't use.  
-cleanint	= 10		# interval for field cleaning; don't use.
-
-cooling		= 0		# cool particles? ; not implemented
-acool		= 10.		# cooling parameter for particles
-splitparts  = 0			# split particles to improve statistics?
+ntimes		= 32		# number of passes for smoothing filter (current)
 
 <restart>
 
 irestart	= 0		# 1 to restart the simulation from saved restart/*.d files.
-intrestart	= 10000		# how often to save restart files. They overwrite previous *d files.
+intrestart	= 10000		# often to save restart files. They overwrite previous *d files.
 laprestart	= 0		# if different from 0, restart from a named restart file, saved at timestep laprestart 
-namedrestartint = 1000000       # interval for saving named restart files, like restart.lap01234.d
+namedrestartint = 80000000      # interval for saving named restart files, like restart.lap01234.d
 
 <output>
 
-interval 	= 50		# plot interval
-torqint		= 2000000	# interval for outputs at different resolution (currently broken)
+interval	= 50		# plot interval
 pltstart	= 0		# starting iteration for first plot
 
-istep		= 2		# downsampling factor for grid output
-istep1		= 2		# downsampling factor for grid output every torqint steps
-stride		= 100		# particle stride for particle output
+istep		= 1 		# downsampling factor for grid output
+stride		= 1		# particle stride for particle output
 
-writetestpart	= 0		# write test particles?
-selectprt	= 0		# re-trace the same selected particles?
+###############################################################
+writetestlec    = 0             # write test electrons for tracking 
+dlaplec         = 90            # interval
+teststartlec    = 1000000                # starting lap 
+testendlec      = 6000000
+
+writetestion    = 0             # write test ions for tracking
+dlapion         = 600           # interval
+teststartion    = 1000000                # starting lap 
+testendion      = 6000000
+###############################################################
 
 <boundaries>
 
@@ -66,43 +68,37 @@ periodicz	= 1			# periodic boundaries in the z direction?
 
 <domain>
 
-enlarge		= 0			# if 1, enlarge box in the x direction if injector is close to right wall? 
-movwin 		= 0			# if 1, use moving window 
-shiftinterval 	= 20			# how often to apply moving window (in steps)
-shiftstart 	= 1000			# at what step to start shifting moving window
-movwingam       = 5.                # gamma factor of moving window. If > 10000, it moves at c.  
-                                        # if < 1, it is interpreted as v/c.
+enlarge		= 0 			# if 1, enlarge box in the x direction if injector is close to right wall
+
 <fields>
 
-btheta	= 0			# bfield angle bphi=0 -> bz, bph=90 in x-y plane, bth=0-> parallel
-bphi	= 90			#
+btheta	= 0			# bfield angle bphi=0 -> bz, bphi=90 in x-y plane, btheta=0-> parallel
+bphi	= 90 			#
 
 <particles>
 
-sigma	= 0.			# magnetization number (omega_c/omega_p)^2, including gamma0
-maxptl0 = 3e7			# max number of particles in the simulation
-ppc0 	= 4			# number of particles per cell
+sigma	= 0.00		# magnetization number (omega_ce/omega_pe)^2, including gamma0 for inertia
+maxptl0 = 1e8		# max number of particles in the simulation
+ppc0 	= 16		# number of particles per cell
 
-delgam 	= 1.e-4			# delta gamma (temperature control)
+
+delgam 	= 2.e-5	         # delta gamma for ions (delgam = k T_i / m_i c^2, T_i is ion temperature)
 me	= 1.			# electron mass
-mi	= 1.			# ion mass (actually mass to charge ratio)
+mi	= 1. 			# ion mass (actually mass to charge ratio)
 
-gamma0	= 15.			# flow drift gamma. If < 1, interpreted as v/c. 
-
+gamma0	= 0.5			# flow drift gamma. If < 1, interpreted as v/c. 
+				# the drift of background plasma in the negative x direction
 c_omp	= 10			# electron skin depth in cells
 
 <problem>
- 
-caseinit = 1                    #can be used to select subcases of the problem. Not used.     
-
-#density_profile=0              #x,y,z dependent function distributing initial particle weight
 
 temperature_ratio = 1       # T_e/T_i
 
-external_fields = 0         # if nonzero, add external nonevolving fields to mover
-sigma_ext = 0.0	            # strength of external magnetization,(omega_c/omega_p)^2, 
-                            # including gamma0 
+external_fields = 0         # if nonzero, add external nonevolving fields to mover; defined in user file
+sigma_ext = 0.           # strength of external magnetization,(omega_ce/omega_pe)^2, 
+                         # including gamma0 
 
-user_part_bcs=1             # call particle_bc_user routine from user file, specify particle bcs like walls
+user_part_bcs=0             # call particle_bc_user routine from user file, specify particle bcs like walls
+
 
 

@@ -46,7 +46,7 @@ module m_aux_3d
 !-------------------------------------------------------------------------------
 
 	real(dprec) :: dseed
-	integer :: lap, irestart, caseinit, lapst
+	integer :: lap, irestart, lapst !caseinit
 	
 !-------------------------------------------------------------------------------
 !	INTERFACE DECLARATIONS
@@ -62,7 +62,7 @@ module m_aux_3d
 
 	! public variables
 
-	public :: debug, lap, irestart, caseinit, lapst, dseed
+	public :: debug, lap, irestart, lapst, dseed ! caseinit,
 
 !-------------------------------------------------------------------------------
 !	MODULE PROCEDURES AND FUNCTIONS
@@ -75,7 +75,7 @@ module m_aux_3d
 !-------------------------------------------------------------------------------
 ! 						function random					 
 !																		
-! Random number generator
+! Random number generator between [0,1]
 !							
 !-------------------------------------------------------------------------------
 

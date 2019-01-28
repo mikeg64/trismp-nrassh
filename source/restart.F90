@@ -220,15 +220,15 @@ subroutine restart()
 	open(unit=7,file=frestartfldlap,form='unformatted')
 	if(debug) print *, rank,": in restart, opening",frestartfldlap 
 	rewind(7)
-	read(7)mxrest,my,mz0,mz,(((ex(i,j,k),i=1,mxrest),j=1,my),k=1,mz) &
-	,(((ey(i,j,k),i=1,mxrest),j=1,my),k=1,mz),(((ez(i,j,k),i=1 &
-	,mxrest),j=1,my),k=1,mz),(((bx(i,j,k),i=1,mxrest),j=1,my),k=1 &
-	,mz),(((by(i,j,k),i=1,mxrest),j=1,my),k=1,mz),(((bz(i,j,k),i &
-	=1,mxrest),j=1,my),k=1,mz),dseed,lapst,xinject,xinject2 &
-	, leftwall, split_E_ions,split_E_lecs
+	read(7)mxrest,myrest,mzrest,(((ex(i,j,k),i=1,mxrest),j=1,myrest),k=1,mzrest) &
+	,(((ey(i,j,k),i=1,mxrest),j=1,myrest),k=1,mzrest),(((ez(i,j,k),i=1 &
+	,mxrest),j=1,myrest),k=1,mzrest),(((bx(i,j,k),i=1,mxrest),j=1,myrest),k=1 &
+	,mzrest),(((by(i,j,k),i=1,mxrest),j=1,myrest),k=1,mzrest),(((bz(i,j,k),i &
+	=1,mxrest),j=1,myrest),k=1,mzrest),dseed,lapst,xinject,xinject2,xinject3 &
+	, leftwall, walloc !,split_E_ions,split_E_lecs
 	close(7)
 	print *,rank,": Read fields: lapst=",lapst,"xinj=",xinject &
-	,"xinj2 =",xinject2 ,"dseed=", dseed
+	,"xinj2 =",xinject2 ,"walloc=",walloc,"dseed=", dseed
 	
 	lapst=lapst+1
 	open(unit=8,file=frestartprtlap,form='unformatted')
@@ -237,7 +237,8 @@ subroutine restart()
 	maxhlf=maxptl/2
 	
 	print *, rank, ": in restart. Reading particles "
-	read(8) ions,lecs,dummy,dummy,   &
+	! ions,lecs,maxptl,maxhlf,totalpartnum, ...
+	read(8) ions,lecs,dummy,dummy, totalpartnum, &
 	(p(n)%x,n=1,ions),(p(n)%x,n=maxhlf+1,maxhlf+lecs), &
 	(p(n)%y,n=1,ions),(p(n)%y,n=maxhlf+1,maxhlf+lecs), &
 	(p(n)%z,n=1,ions),(p(n)%z,n=maxhlf+1,maxhlf+lecs), &

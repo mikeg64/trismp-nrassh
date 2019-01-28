@@ -21,6 +21,7 @@ module m_tris
 	use m_domain
 	use m_overload
 	use m_particles_movedeposit
+	use m_dynamic_domain
 #else
 
 module m_tris_3d
@@ -36,6 +37,7 @@ module m_tris_3d
 	use m_domain_3d
 	use m_overload_3d
 	use m_particles_movedeposit_3d
+	use m_dynamic_domain_3d
 #endif
 
 
@@ -90,22 +92,28 @@ subroutine mainloop()
 	implicit none
 	
 	logical, parameter :: tmstop=.true.
-	integer :: ierr
+	integer :: ierr, n
+	real (dprec) :: temp
+
+		integer n1
+		real xg,yg,zg
+		
 	
 	do lap=lapst,last !every time step is called "lap"
 	
-	        call timer(1)
+	    call timer(1)
 		call timer(2)
 
 		! Advance the Magnetic field half time step	
-		
-		call pre_bc_b()
-		
-		call advance_Bhalfstep()
-		
-		call bc_b1() !periodic bcs, no surface
+!		print *, "prebc" !hack
 
-		
+		call pre_bc_b()
+!		print *, "advance b half" !hack		
+		call advance_Bhalfstep()
+				
+!		print *, "bc_b1" !hack
+		call bc_b1() !periodic bcs, no surface
+			
 		if(debug) print *,rank,":advanced b", "step=", lap
 		
 		call timer(2,tmstop=tmstop)
@@ -114,44 +122,48 @@ subroutine mainloop()
 		!can calcualte energy diagnostics here -- see energy.f
 		
 		! Advance particle velocities
-		
+		temp=mpi_wtime()
+
 		call move_particles()
 		
 		call timer(3,tmstop=tmstop)
 		call timer(4)
-		
+
+		call timer(14) !hack
 		call advance_Bhalfstep()
-
+				
 		if(debug) print *,rank,"b4 bc_b2", "step=", lap
+		call timer(14,tmstop=tmstop) !hack
+		call timer(15) !hack
 		call bc_b2() !with radiation bc
-		if(debug) print *,rank,"aft bc_b2", "step=", lap
 
+		if(debug) print *,rank,"aft bc_b2", "step=", lap
+		call timer(15,tmstop=tmstop) !hack
+		call timer(16) !hack
 		call field_bc_user()
+		
+		call timer(16,tmstop=tmstop) !hack
+
+		call timer(24) !hack
 
 		call post_bc_b()
 		if(debug) print *,rank,": advanced b2", "step=", lap
-
 		call pre_bc_e()
-
+			
 		call advance_Efield()
-
+							
 		call field_bc_user()
-
+		
+		call timer(24,tmstop=tmstop) !hack
+		call timer(25) !hack
 		call bc_e2() !with radiation bc
 
 		call post_bc_e()
 
 		call field_bc_user()
 
-		
-		!     add filter of the electric & magnetic fields -- needed for
-		!     suppression of Numerical Cherenkov instability in relativistic shocks. Not needed otherwise
-		!     controlled in the input file with cleanfld, cleanint. Method of last
-                !     resort, not recommended. 
-		
-		call clean_fld()
-		
 		if(debug) print *,rank,": advanced e", "step=", lap,ions,lecs
+		call timer(25,tmstop=tmstop) !hack
 
 		call timer(4,tmstop=tmstop)
 
@@ -159,10 +171,9 @@ subroutine mainloop()
 
 		call reset_currents() !set arrays for current to 0.
 
-		if(user_part_bcs) call particle_bc_user()  !e.g., reflecting walls
-
+                if(user_part_bcs) call particle_bc_user()  !e.g., reflecting walls
 		call deposit_particles()
-
+		
 		call timer(5,tmstop=tmstop)
 		
 		if(debug) print *,rank,": deposit", "step=", lap
@@ -170,7 +181,7 @@ subroutine mainloop()
 		call timer(6)
 
 		call exchange_particles()
-
+							
 		call timer(6,tmstop=tmstop)
 
 		call timer(7)
@@ -180,7 +191,6 @@ subroutine mainloop()
 			call mpi_barrier(mpi_comm_world,ierr)
 			print *,rank,"b4 exchange" ,"step=",lap
 		endif
-		
 		call exchange_current() !include periodic bc on current
 		
 		if(debug) print *,rank,": exchcur", "step=", lap
@@ -188,23 +198,45 @@ subroutine mainloop()
 		call timer(7,tmstop=tmstop)
 		call timer(8)
 
-		if(modulo(mx-5,2).eq.0 .and. modulo(my-5,2).eq.0 .and. modulo(mz-5,2).eq.0) then
-		   call apply_filter1_opt() !filter2 hack
+		! ! Uncomment one of the following filters.
+		! ! Check domain.F90 and fields.F90 to uncomment array allocations if using a filter other than 1 or 2.
+
+		! Original. Possibly fastest at 1 or 2 cores, or when using a moving wall
+		!
+#ifdef twoD
+                call apply_filter1_opt()
+#else
+		! Reordered. Usually fastest at more cores.  Only works if all dimensions >= ntimes
+#ifdef filter2
+		if(ntimes .le. my .or. ntimes .le. mz) then 
+		call apply_filter2_opt()  !comment out to hack no filter
+!!		call apply_filter1_opt()
 		else
-		   if(rank.eq.0) print *, "Array sizes are not divisible by two. &
-		                       Using slower filter."
-		   call apply_filter1_opt()
-		endif
+                call apply_filter1_opt()
+	     endif
+#else
+                call apply_filter1_opt()
+!#ifdef filter2
+#endif 
+		  
+#endif
+		! Reordered with copy. Probably never the fastest
+		!call apply_filter2_copy_opt()
+
+		! Chunk filtering. Warning: boundary conditions not fully implemented
+		!call apply_filter3_opt()
 
 		call timer(8,tmstop=tmstop)
-
+		
 		if(debug) print *,rank,": filter", "step=", lap
 		
 		call timer(9)
 
 		call add_current()
 		
-		call bc_e1()
+		call conduct_bc()
+
+		call bc_e1() 
 
 		call field_bc_user()
 
@@ -214,33 +246,83 @@ subroutine mainloop()
 
 		call timer(10)
 		
-		call inject_particles()
-
+		call timer(20)
 		call inject_others() !inject particles that enter from other processors
+		call timer(20, tmstop=tmstop)
 
+		if(debug) print *,rank,": aft inject_others", " step=", lap
+
+		call timer(21)
+!		call mpi_allreduce((LenIonOutDwn+LenIonOutUp+LenLecOutDwn+LenLecOutUp),outcorner, &
+!                 1,mpi_integer,mpi_max,mpi_comm_world,ierr)
+		  call timer(21,tmstop=tmstop)
+		  
+		  outcorner=1
+		  if(outcorner .ne. 0) then
+		   if(debug) print *, rank,": b4 second exchange", " step=", lap
+		   call timer(22)	   
+			call exchange_particles() !to fix the corner going particles, moving in z 
+			call timer(22, tmstop=tmstop)
+		
+			call timer(23)
+		   if(debug) print *, rank,": b4 second inject", " step=", lap
+			call inject_others()
+			call timer(23,tmstop=tmstop)
+		endif
+		call timer(24)
+
+		call timer(24,tmstop=tmstop)
+		
+		call timer(19)
+		call inject_particles() 
+		call timer(19,tmstop=tmstop)
+		if(debug) print *,rank,": aft inject_particles", " step=", lap
+		  
+		  call timer(25)
 		call check_overflow()
+		call timer(25,tmstop=tmstop)
 
-		if(debug .and. rank .eq. 0) print *, "aft inject", ions, lecs, receivedlecs
+		if(debug) print *, "aft inject", "step=",lap, ions, lecs, receivedlecs
 		
 		call timer(10,tmstop=tmstop)
-						
-		call Diagnostics()
+			
+		call Diagnostics()		
 		
 		call timer(11)
 		
-		call moving_window(1) !arg >0 moving to the right, <0 to left
+		call enlarge_domain()
 		
 		call timer(11,tmstop=tmstop)
-
-		call enlarge_domain()
 				
 		call timer(12)
 		
 		call reorder_particles()
-				
+		   
 		call timer(12,tmstop=tmstop)
+			
+		call timer(31)
+				
+		call redist_x_domain() 
 		
-		call split_parts()
+		call timer(31,tmstop=tmstop)
+		
+		call timer(32)
+		
+		call redist_y_domain() 
+		
+		call shift_domain() 		
+		
+		call timer(32,tmstop=tmstop)
+
+#ifndef twoD		
+		call timer(33)
+		
+		call redist_z_domain() 
+		
+		call timer(33,tmstop=tmstop)		
+#endif		
+		
+!		call split_parts()
 		
 		if(debug) print *,rank,": endofloop", "step=", lap
 

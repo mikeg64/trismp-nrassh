@@ -63,8 +63,10 @@ module m_particles_movedeposit_3d
 subroutine move_particles()
 
 	implicit none
+	
+	integer ierr
 
-		call mover(1,ions,qmi)					! ions
+		call mover(1,ions,qmi)			! ions				
 		call mover(1+maxhlf,lecs+maxhlf,qme)	! electrons
 	
 	if(debug) print *,rank,": done mover", "step=", lap
@@ -75,7 +77,6 @@ end subroutine move_particles
 
 !-------------------------------------------------------------------------------
 ! 						subroutine mover()					 
-!																		
 ! 
 !
 !-------------------------------------------------------------------------------
@@ -95,31 +96,30 @@ subroutine mover(n1,n2,qm)
 	real dx, dy, dz, f, g, ex0, ey0, ez0, bx0, by0, bz0
 	real u0,v0,w0,u1,v1,w1, cinv, g1, corrqm
 	real qm0
-!, xglob, yglob, gammawall, betawall, gamma, walloc
-!	real vdriftx, vdrifty, gdrift, decrem
 
-!	integer ::yes_gammacut
-!	real gammacut
 #ifdef vay
 	real ustar,sig,tx,ty,tz,vx0,vy0,vz0
 #endif
 	real bx_ext, by_ext, bz_ext, ex_ext, ey_ext, ez_ext
-!	real pcosth, pphi, psinth, v0t, ut1, vt1, wt1, gam
-!	real ptx, pty, ptz
 
 	cinv=1./c	
 	qm0=qm
 
-	do n=n1,n2
+	  do n=n1,n2
+
+	      npr=n
+	      
+	!##########################################################################
+	!### 	tri-linear field interpolation (original version)
+	!##########################################################################
 			
-		npr=n
 		i=aint(p(npr)%x)
 		dx=p(npr)%x-i
 		j=p(npr)%y
 		dy=p(npr)%y-j
 		k=p(npr)%z
 		dz=p(npr)%z-k
-		
+
 #ifdef twoD
 		k=1
 		dz=0
@@ -177,8 +177,6 @@ subroutine mover(n1,n2,qm)
 		
 		ez0=(f+dy*(g-f))*(.25*qm)
 		
-		!   ---------
-		!   B-component interpolations:
 		f=bx(l-iy,1,1)+bx(l-iy-iz,1,1)+dz*(bx(l-iy+iz,1,1)-bx(l-iy-iz,1 &
 		,1))
 		f=bx(l,1,1)+bx(l-iz,1,1)+dz*(bx(l+iz,1,1)-bx(l-iz,1,1))+f+dy &
@@ -219,21 +217,20 @@ subroutine mover(n1,n2,qm)
 		+ix+iy,1,1)-bz(l+iz+ix-iy,1,1))-g)
 		
 		bz0=(f+dz*(g-f))*(.125*qm*cinv)
-
-		if(external_fields) then
 		
-                   call get_external_fields(real(p(npr)%x,sprec),p(npr)%y,&
-		   p(npr)%z,ex_ext,ey_ext,ez_ext,bx_ext,by_ext,bz_ext)
+			
+                if(external_fields) then
+                call get_external_fields(real(p(npr)%x,sprec),real(p(npr)%y,sprec),&
+                p(npr)%z,ex_ext,ey_ext,ez_ext,bx_ext,by_ext,bz_ext,qm)
                    
-		   bx0=bx0+bx_ext*0.5*qm*cinv
-                   by0=by0+by_ext*0.5*qm*cinv
-                   bz0=bz0+bz_ext*0.5*qm*cinv
-                   ex0=ex0+ex_ext*0.5*qm
-                   ey0=ey0+ey_ext*0.5*qm
-                   ez0=ez0+ez_ext*0.5*qm
+                bx0=bx0+bx_ext*0.5*qm*cinv
+                by0=by0+by_ext*0.5*qm*cinv
+                bz0=bz0+bz_ext*0.5*qm*cinv
+                ex0=ex0+ex_ext*0.5*qm
+                ey0=ey0+ey_ext*0.5*qm
+                ez0=ez0+ez_ext*0.5*qm
 
 		endif
-
 
 		!   First half electric acceleration, with relativity's gamma:		
 #ifdef vay
@@ -243,12 +240,12 @@ subroutine mover(n1,n2,qm)
 			vy0=c*p(npr)%v*g
 			vz0=c*p(npr)%w*g
 			
-			u1=c*p(npr)%u+2.*ex0+vy0*bz0-vz0*by0 !uprime, taking into account 
+			u1=c*p(npr)%u+2.*ex0+vy0*bz0-vz0*by0 !u-prime, taking into account 
                                                              !that cinv is already incorporated within B
 			v1=c*p(npr)%v+2.*ey0+vz0*bx0-vx0*bz0
 			w1=c*p(npr)%w+2.*ez0+vx0*by0-vy0*bx0
 
-				!Lorentz factor for uprime			
+			!Lorentz factor for uprime			
 
 			ustar=cinv*(u1*bx0+v1*by0+w1*bz0)
 			sig=cinv*cinv*(c**2+u1**2+v1**2+w1**2)-(bx0**2+by0**2+bz0**2)
@@ -289,11 +286,10 @@ subroutine mover(n1,n2,qm)
 		
 		!   Position advance:
 			g=c/sqrt(c**2+u0**2+v0**2+w0**2)
+
 			p(npr)%x=p(npr)%x + p(npr)%u*g*c
 			p(npr)%y=p(npr)%y + p(npr)%v*g*c 
 			p(npr)%z=p(npr)%z + p(npr)%w*g*c
-		
-
 
 	enddo
 
@@ -305,7 +301,6 @@ end subroutine mover
 ! Deposits the particles on the grid
 !
 !-------------------------------------------------------------------------------
-
 subroutine deposit_particles()
 
 	implicit none
@@ -314,9 +309,43 @@ subroutine deposit_particles()
 	
 	integer ::ind1,n1,n
 	logical in
-	real(dprec) :: x0, perx
-	real y0,z0,perz,pery, invgam
+	real(sprec) :: x0, y0, perx, pery
+	real z0,perz,invgam
 	
+	integer ierr, ions0, lecs0
+	
+	integer i1, j1, k1
+
+	real gc_x, gc_y, gc_z !hack, vars for printing
+	
+	real xt,yt,zt !hack variables for printing 	
+        real midx, midy, midz, maxx, maxy, maxz, minx, miny, minz
+
+	real(dprec) :: x1,x2, y1, y2
+	real(sprec) :: z1,z2
+
+        real x1sp, x2sp, y1sp, y2sp
+	
+	! relay point (xr,yr,zr)
+!	real(dprec) :: xr, yr
+        real :: xr, yr
+	real zr
+	! charge fluxes in 1st order scheme
+	real Fx1, Fx2, Fy1, Fy2, Fz1, Fz2
+	! shape functions
+	real Wx1, Wx2, Wy1, Wy2, Wz1, Wz2, onemWx1, onemWx2, onemWy1, onemWy2, onemWz1, onemWz2
+	integer :: i2, j2, k2  
+       
+        integer :: i1p1, i2p1, j1p1, j2p1
+        
+#ifndef twoD
+        integer :: k1p1, k2p1
+#endif
+ 
+ integer :: nlev, levels, m
+
+ levels=8
+
 	LenIonOutUp=0
 	LenIonOutDwn=0
 	LenLecOutUp=0
@@ -335,139 +364,347 @@ subroutine deposit_particles()
 	LenLecInLft=0
 	LenLecInRgt=0
 	
+	LenIonOutMinus=0
+	LenIonOutPlus=0
+	LenLecOutMinus=0
+	LenLecOutPlus=0
+	LenIonInMinus=0
+	LenIonInPlus=0
+	LenLecInMinus=0
+	LenLecInPlus=0	
+		
 	nionout=0
 	nlecout=0	
 	
 	!particles are in local coordinates
 	n=1
 
-	if (ions.gt.0) then
-		52     continue
-		n1=n !indp(n)
+        maxx=mx-2.
+        minx=3.
+        maxy=my-2.
+        miny=3.
 
-		invgam=1./sqrt(1+p(n1)%u**2+p(n1)%v**2+p(n1)%w**2)
+        midx=.5*(maxx-minx)
+        midy=.5*(maxy-miny)
+
+#ifndef twoD
+        maxz=mz-2.
+        minz=3.
+#else
+        minz=3.
+        maxz= 6.-2.
+#endif
+        midz = .5*(maxz-minz)
+
+	if (ions.gt.0) then
+
+#define cleancur
+
+#ifdef cleancur	
+    do n=1,ions
+	n1=n
+#endif
+             invgam=1./sqrt(1+p(n1)%u**2+p(n1)%v**2+p(n1)%w**2)
 		
 		x0=p(n1)%x-p(n1)%u*invgam*c
 		y0=p(n1)%y-p(n1)%v*invgam*c
 		z0=p(n1)%z-p(n1)%w*invgam*c
 		
-		q=p(n1)%ch*real(splitratio)**(1.-real(p(n1)%splitlev))*qi
-		
-				!deposition of current, based on papers by Umeda
-		if(x0<0 .or. y0<0 ) then !.or. lap.gt.13244) then
-		write(*,'(A,I7,A,3(I5,A),3(F8.4,A))') "prb ",p(n1)%ind," ",p(n1)%proc," ",&
-		lap," ",rank," ",p(n1)%x," ",x0," ",y0," ",z0," "
-		endif
-		
-                call zigzag(p(n1)%x,p(n1)%y,p(n1)%z,x0,y0,z0,in)
+		q=p(n1)%ch*qi ! real(splitratio)**(1.-real(p(n1)%splitlev))*qi 
 
-		!
-		if(periodicx.eq.1) then
-			perx=sign(real(.5*(mx-5.),8),p(n1)%x-3.)+sign(real(.5*(mx-5.) &
-			,8),(p(n1)%x)-mx+2.) 
-			p(n1)%x=p(n1)%x-perx
-		endif
-		if(periodicx .eq. 0 ) then
-               
-			in=(p(n1)%x.gt.x1in).and.(p(n1)%x.lt.x2in)
+!		call zigzag(p(n1)%x,p(n1)%y,p(n1)%z,x0,y0,z0,in)
+  
+	! zigzag method (1st order version) (Ref: Umeda et al. 2003)
 
-!			if(wall)then
-!				in=((p(n1)%x.gt.leftwall-10).and.(p(n1)%x.le.xinject2))
-!			else
-!				in=((p(n1)%x.gt.3.0).and.(p(n1)%x.le.xinject2))
-!			endif
+        x1sp=x0
+        x2sp=p(n1)%x
+        y1sp=y0
+        y2sp=p(n1)%y
+
+        z1=z0
+        z2=p(n1)%z
+
+        i1=int(x1sp)
+        i2=int(x2sp)
+        j1=int(y1sp)
+        j2=int(y2sp)
+        k1=int(z1)
+        k2=int(z2)
+
+
+	xr=min(real(min(i1,i2)+1),max(real(max(i1,i2)),.5*(x1sp+x2sp)))
+	yr=min(real(min(j1,j2)+1),max(real(max(j1,j2)),.5*(y1sp+y2sp)))
+	zr=min(real(min(k1,k2)+1),max(real(max(k1,k2)),.5*(z1+z2)))
+	
+#ifdef twoD
+		k1=1
+		k2=1
+#endif
+
+	!-q to include -j in the Ampere's equation, to be consistent
+	
+	Fx1=-q*(xr-x1sp)
+	Fy1=-q*(yr-y1sp)
+	Fz1=-q*(zr-z1)
+	
+	Wx1=.5*(x1sp+xr)-i1
+	Wy1=.5*(y1sp+yr)-j1
+
+#ifndef twoD
+        Wz1=.5*(z1+zr)-k1
+#endif
+
+	Wx2=.5*(x2sp+xr)-i2
+	Wy2=.5*(y2sp+yr)-j2
+
+#ifndef twoD
+		Wz2=.5*(z2+zr)-k2
+#endif
+	
+	Fx2=-q*(x2sp-xr)
+	Fy2=-q*(y2sp-yr)
+	Fz2=-q*(z2-zr)
+	
+#ifdef twoD
+		Wz1=0
+		Wz2=0
+#endif
+
+  onemWx1=1.-Wx1
+  onemWx2=1.-Wx2
+  onemWy1=1.-Wy1
+  onemWy2=1.-Wy2
+  onemWz1=1.-Wz1
+  onemWz2=1.-Wz2
+
+  i1p1=i1+1
+  i2p1=i2+1
+  j1p1=j1+1
+  j2p1=j2+1
+#ifndef twoD
+  k1p1=k1+1
+  k2p1=k2+1
+#endif  
+
+#ifdef cleancur
+
+  curx(i1,j1,k1)=curx(i1,j1,k1)+Fx1 * onemWy1 * onemWz1
+  curx(i1,j1p1,k1)=curx(i1,j1p1,k1)+Fx1 * Wy1 * onemWz1 
+#ifndef twoD
+  curx(i1,j1,  k1p1)= curx(i1,j1,  k1p1)+Fx1 * onemWy1 * Wz1
+  curx(i1,j1p1,k1p1)= curx(i1,j1p1,k1p1)+Fx1 *  Wy1    * Wz1
+#endif
+
+  curx(i2,j2,k2)=curx(i2,j2,k2)+Fx2 * onemWy2 * onemWz2 
+  curx(i2,j2p1,k2)=curx(i2,j2p1,k2)+Fx2 * Wy2 * onemWz2 
+#ifndef twoD
+  curx(i2,j2,  k2p1)= curx(i2,j2,  k2p1)+Fx2 * onemWy2* Wz2
+  curx(i2,j2p1,k2p1)= curx(i2,j2p1,k2p1)+Fx2 *  Wy2    * Wz2
+#endif
+
+  cury(i1,j1,k1)=cury(i1,j1,k1)+Fy1 * onemWx1 * onemWz1 
+  cury(i1p1,j1,k1)=cury(i1p1,j1,k1)+Fy1 * Wx1 * onemWz1  
+#ifndef twoD
+  cury(i1  ,j1,k1p1)= cury(i1  ,j1,k1p1)+Fy1 * onemWx1 * Wz1
+  cury(i1p1,j1,k1p1)= cury(i1p1,j1,k1p1)+Fy1 *  Wx1    * Wz1
+#endif
+  cury(i2,j2,k2)=cury(i2,j2,k2)+Fy2 * onemWx2 * onemWz2 
+  cury(i2p1,j2,k2)=cury(i2p1,j2,k2)+Fy2 *  Wx2 * onemWz2
+#ifndef twoD
+  cury(i2  ,j2,k2p1)= cury(i2  ,j2,k2p1)+Fy2 * onemWx2 * Wz2
+  cury(i2p1,j2,k2p1)= cury(i2p1,j2,k2p1)+Fy2 *  Wx2    * Wz2
+#endif
+
+  curz(i1,j1,k1)=curz(i1,j1,k1)+ Fz1 * onemWx1 * onemWy1
+  curz(i1p1,j1,k1)=curz(i1p1,j1,k1)+Fz1 * Wx1 * onemWy1
+  curz(i1,j1p1,k1)=curz(i1,j1p1,k1)+Fz1 * onemWx1 * Wy1
+  curz(i1p1,j1p1,k1)=curz(i1p1,j1p1,k1)+Fz1 * Wx1 * Wy1 
+
+  curz(i2,j2,k2)=curz(i2,j2,k2)+ Fz2 * onemWx2 * onemWy2 
+  curz(i2p1,j2,k2)=curz(i2p1,j2,k2)+ Fz2 * Wx2 * onemWy2 
+  curz(i2,j2p1,k2)=curz(i2,j2p1,k2)+ Fz2 * onemWx2 * Wy2
+  curz(i2p1,j2p1,k2)=curz(i2p1,j2p1,k2)+ Fz2 * Wx2 * Wy2 
+
+#endif !cleancur
+        enddo !m,n=1,ions
+
+#define dontSKIP
+#ifdef dontSKIP
+        pind(1:ions)=0
+
+        do n=1,ions
+        in=.true.
+	n1=n	
+  perx=0.
+  pery=0.
+  perz=0.
+
+  if(p(n1)%x .lt. minx .or. p(n1)%x .gt. maxx) then 
+ 		perx=sign(midx,p(n1)%x-minx)+sign(midx,p(n1)%x-maxx)    
+  endif
+  if(p(n1)%y .lt. miny .or. p(n1)%y .gt. maxy) then 
+ 		pery=sign(midy,p(n1)%y-miny)+sign(midy,p(n1)%y-maxy)    
+  endif
+  if(p(n1)%z .lt. minz .or. p(n1)%z .gt. maxz) then 
+		perz=sign(midz,p(n1)%z-minz)+sign(midz,p(n1)%z-maxz)
+  endif
+
+		if(periodicx.eq.0) then      
+			in=(p(n1)%x+mxcum .gt. x1in) .and. (p(n1)%x+mxcum .lt. x2in)
 		endif
 		
-		
-		!        x0=x0-per   
-		
-		pery=sign(.5*(my-5.),p(n1)%y-3.)+sign(.5*(my-5.),p(n1)%y-my+2.)
-		if(pery .ne. 0 .and. .not. in) pery=0
-		if(pery .lt. 0 .and. modulo(rank,sizey).eq.0  .and. in) then
-			pery=sign(.5*(mylast-5.),p(n1)%y-3.)+sign(.5*(mylast-5.),p(n1) &
-			%y-mylast +2.) !put it at the top of last rank
+		if(periodicy.eq.0 .and. in) then 
+			in=(p(n1)%y+mycum .gt. y1in) .and. (p(n1)%y+mycum .lt. y2in)
 		endif
-		if(pery .lt. 0 .and. modulo(rank,sizey).eq.sizey-1 .and. in) then
-			pery=sign(.5*(myall-5.),p(n1)%y-3.)+sign(.5*(myall-5.),p(n1)%y &
-			-myall +2.) !put it at the top of the size-2
+#ifndef twoD						
+		if(periodicz.eq.0 .and. in) then      
+			in=(p(n1)%z+mzcum .gt. z1in) .and. (p(n1)%z+mzcum .lt. z2in)
+		endif		
+#endif
+
+		! to discard a particle
+		if(.not. in) then
+			perx=0
+			pery=0
+			perz=0
+		endif		
+		
+		! to send to another processor
+		if(perx .ne. 0 .and. in .and. sizex .ne. 1) then
+			in=.false.	
+			pery=0
+			perz=0
 		endif
-		if(pery .ne. 0 .and. in ) in=.false.
+				
+		! assume non-uniform mx
+		if(perx .lt. 0 .and. sizex .ne. 1) then		
+			! minus rank (-x direction)		
+			i1=(rank/sizex)*sizex + modulo(rank-1,sizex) 
+			perx=-(mxl(i1+1)-5.)				
+		endif
+		
+		p(n1)%x=p(n1)%x-perx		
+				
+		! to send to another processor
+		if(pery .ne. 0 .and. in .and. sizey .ne. 1) then
+			in=.false.
+			perx=0
+			perz=0
+		endif
+		
+		! assume non-uniform my
+		if(pery .lt. 0 .and. sizey .ne. 1) then		
+			! left rank	(-y direction)	
+!			j1=modulo((rank/sizex - 1),sizey)*sizex + modulo(rank,sizex)
+			j1=modulo(rank/sizex - 1,sizey)*sizex+rank/(sizex*sizey)*(sizex*sizey) &
+				+ modulo(rank,sizex) 
+			pery=-(myl(j1+1)-5.)				
+		endif
 		
 		p(n1)%y=p(n1)%y-pery
 		
-		!
 #ifndef twoD
-			perz=sign(.5*(mz-5.),p(n1)%z-3.)+sign(.5*(mz-5.),p(n1)%z-mz +2.)
-			
-			if(perz .ne. 0 .and. .not. in  ) perz=0
-			if(perz .lt. 0 .and. rank/sizey.eq.0  .and. in) then
-				perz=sign(.5*(mzlast-5.),p(n1)%z-3.)+sign(.5*(mzlast-5.),p(n1) &
-				%z-mzlast +2.) !put it at the top of last rank
-			endif
-			if(perz .lt. 0 .and. rank/sizey.eq.sizez-1  .and. in) then
-				perz=sign(.5*(mzall-5.),p(n1)%z-3.)+sign(.5*(mzall-5.),p(n1)%z &
-				-mzall +2.) !put it at the top of the size-2
-			endif
-			if(perz .ne. 0 .and. in ) in=.false.
-#else
-			perz=0
-			perz=sign(.5*(6-5),p(n1)%z-3.)+sign(.5*(6-5.),p(n1)%z-6 +2.)
-			p(n1)%z=p(n1)%z-perz
-			perz=0
+		! to send to another processor
+		if(perz .ne. 0 .and. in ) then
+			in=.false.
+			perx=0
+			pery=0
+		endif	
+		! assume non-uniform mz
+		if(perz .lt. 0) then		
+			! down rank	(-z direction)	
+			k1=modulo(rank/(sizex*sizey) - 1,sizez)*(sizex*sizey) + & 
+			      modulo(rank,sizex*sizey) 
+			perz=-(mzl(k1+1)-5.)				
+		endif
 #endif
 		
-		p(n1)%z=p(n1)%z-perz
+		p(n1)%z=p(n1)%z-perz		
 		
-		!        z0=z0-per   
 		
 		if(in) go to 58
 	
 		nionout=nionout+1
 			
 		!check if the paricle is going to another proc
-		
+#ifndef	twoD	
 		if(perz .lt. 0) then
 			!this particle is going to the processor below
-			LenIonOutDwn=LenIonOutDwn+1
-			poutdwn(LenIonOutDwn)=p(n1)           
+		      LenIonOutDwn=LenIonOutDwn+1
+!		      poutdwn(LenIonOutDwn)=p(n1)           
+		      call copyprt(p(n1), poutdwn(LenIonOutDwn))
 		endif
 	
 		if(perz .gt. 0) then
 			!this particle is going to the processor above
 			LenIonOutUp=LenIonOutUp+1
-			poutup(LenIonOutUp)=p(n1)
+	!		poutup(LenIonOutUp)=p(n1)
+			call copyprt(p(n1),poutup(LenIonOutUp))
+
 		endif
+#endif
 		
+		if(sizey .ne. 1) then
 		if(pery .lt. 0) then
 			!this particle is going to the processor on the left
 			LenIonOutLft=LenIonOutLft+1
-			poutlft(LenIonOutLft)=p(n1)
+!			poutlft(LenIonOutLft)=p(n1)
+			call copyprt(p(n1),poutlft(LenIonOutLft))
 		endif
+
 		if(pery .gt. 0) then
 			!this particle is going to the processor on the right
 			LenIonOutRgt=LenIonOutRgt+1
-			poutrgt(LenIonOutRgt)=p(n1)
+			call copyprt(p(n1),poutrgt(LenIonOutRgt))
 		endif
+		endif !if(sizey .ne. 1)
 		
-		!  Replace by the ion from the top of the stack:
-		
-		p(n1)=p(ions)
-		
-		ions=ions-1
-		n=n-1
-		58	n=n+1
-	
-		if(n.le.ions)go to 52
-	
+		if(sizex .ne. 1) then
+		if(perx .lt. 0) then
+			!this particle is going to the processor on the left
+			LenIonOutMinus=LenIonOutMinus+1
+			call copyprt(p(n1),poutminus(LenIonOutMinus))
+		endif
+
+		if(perx .gt. 0) then
+			!this particle is going to the processor on the right
+			LenIonOutPlus=LenIonOutPlus+1
+			call copyprt(p(n1),poutplus(LenIonOutPlus))
+		endif
+		endif !if(sizex .ne. 1) then
+  
+  pind(n1)=1
+!  print *, rank, "pind=1", perx, pery, perz, n1
+58 continue	
+
+  enddo !n=1,ions
+  
+!now clean particles
+  ions0=ions
+  do n=1,ions0
+     if(pind(n) .ne. 0) then
+        do while (pind(n) .ne. 0)
+!           print *, "discarding", pind(n), n, p(n)%x, p(n)%y, p(n)%z, ions, ions0, lap, rank
+           call copyprt(p(ions),p(n))
+           pind(n)=pind(ions)
+           pind(ions)=0
+           ions=ions-1
+        enddo
+     endif
+  enddo
+#endif !dontSKIP
+
 	endif !if ions .gt. 0
-	
+		
 	if(debug) print *, rank,":","deposited ions","step=",lap 
 	
-	n=maxhlf+1
-	
 	if(lecs.gt.0) then
-		53      continue
-		n1=n !indp(n)
+!		53      continue
+
+        do n=1,lecs
+        in=.true.
+
+		n1=n+maxhlf !indp(n)
 
 		invgam=1./sqrt(1+p(n1)%u**2+p(n1)%v**2+p(n1)%w**2)
 		
@@ -475,120 +712,294 @@ subroutine deposit_particles()
 		y0=p(n1)%y-p(n1)%v*invgam*c
 		z0=p(n1)%z-p(n1)%w*invgam*c
 		
-		q=p(n1)%ch*real(splitratio)**(1.-real(p(n1)%splitlev))*qe
+		q=p(n1)%ch*qe 
 		
-		if(x0<0 .or. y0<0) then ! .or. lap.gt.13244) then
-		write(*,'(A,I7,A,3(I5,A),4(F8.4,A))') "prb ",p(n1)%ind," ",p(n1)%proc," ",&
-		lap," ",rank," ",p(n1)%x," ",x0," ",y0," ",z0," "
-		endif
+!		call zigzag(p(n1)%x,p(n1)%y,p(n1)%z,x0,y0,z0,in)
 
-		call zigzag(p(n1)%x,p(n1)%y,p(n1)%z,x0,y0,z0,in)
+!  goto 107
+        x1sp=x0
+        x2sp=p(n1)%x
+        y1sp=y0
+        y2sp=p(n1)%y
+
+        z1=z0
+        z2=p(n1)%z
+
+        i1=int(x1sp)
+        i2=int(x2sp)
+        j1=int(y1sp)
+        j2=int(y2sp)
+        k1=int(z1)
+        k2=int(z2)
+
+
+	xr=min(real(min(i1,i2)+1),max(real(max(i1,i2)),.5*(x1sp+x2sp)))
+	yr=min(real(min(j1,j2)+1),max(real(max(j1,j2)),.5*(y1sp+y2sp)))
+	zr=min(real(min(k1,k2)+1),max(real(max(k1,k2)),.5*(z1+z2)))
 	
+#ifdef twoD
+		k1=1
+		k2=1
+#endif
+
+	!-q to include -j in the Ampere's equation, to be consistent
+	
+	Fx1=-q*(xr-x1sp)
+	Fy1=-q*(yr-y1sp)
+	Fz1=-q*(zr-z1)
+	
+	Wx1=.5*(x1sp+xr)-i1
+	Wy1=.5*(y1sp+yr)-j1
+
+#ifndef twoD
+        Wz1=.5*(z1+zr)-k1
+#endif
+
+	Wx2=.5*(x2sp+xr)-i2
+	Wy2=.5*(y2sp+yr)-j2
+
+#ifndef twoD
+		Wz2=.5*(z2+zr)-k2
+#endif
+	
+	Fx2=-q*(x2sp-xr)
+	Fy2=-q*(y2sp-yr)
+	Fz2=-q*(z2-zr)
+	
+#ifdef twoD
+		Wz1=0
+		Wz2=0
+#endif
+
+  onemWx1=1.-Wx1
+  onemWx2=1.-Wx2
+  onemWy1=1.-Wy1
+  onemWy2=1.-Wy2
+  onemWz1=1.-Wz1
+  onemWz2=1.-Wz2
+
+  i1p1=i1+1
+  i2p1=i2+1
+  j1p1=j1+1
+  j2p1=j2+1
+#ifndef twoD
+  k1p1=k1+1
+  k2p1=k2+1
+#endif  
+
+#ifdef cleancur
+  
+!  j(i1+j1*iy+k1*iz)=  j(i1+j1*iy+k1*iz)+Fx1 * onemWy1 * onemWz1
+
+!if(1<0) then 
+  curx(i1,j1,k1)=curx(i1,j1,k1)+Fx1 * onemWy1 * onemWz1
+  curx(i1,j1p1,k1)=curx(i1,j1p1,k1)+Fx1 * Wy1 * onemWz1 
+#ifndef twoD
+  curx(i1,j1,  k1p1)= curx(i1,j1,  k1p1)+Fx1 * onemWy1 * Wz1
+  curx(i1,j1p1,k1p1)= curx(i1,j1p1,k1p1)+Fx1 *  Wy1    * Wz1
+#endif
+
+  curx(i2,j2,k2)=curx(i2,j2,k2)+Fx2 * onemWy2 * onemWz2 
+  curx(i2,j2p1,k2)=curx(i2,j2p1,k2)+Fx2 * Wy2 * onemWz2 
+#ifndef twoD
+  curx(i2,j2,  k2p1)= curx(i2,j2,  k2p1)+Fx2 * onemWy2* Wz2
+  curx(i2,j2p1,k2p1)= curx(i2,j2p1,k2p1)+Fx2 *  Wy2    * Wz2
+#endif
+
+  cury(i1,j1,k1)=cury(i1,j1,k1)+Fy1 * onemWx1 * onemWz1 
+  cury(i1p1,j1,k1)=cury(i1p1,j1,k1)+Fy1 * Wx1 * onemWz1  
+#ifndef twoD
+  cury(i1  ,j1,k1p1)= cury(i1  ,j1,k1p1)+Fy1 * onemWx1 * Wz1
+  cury(i1p1,j1,k1p1)= cury(i1p1,j1,k1p1)+Fy1 *  Wx1    * Wz1
+#endif
+  cury(i2,j2,k2)=cury(i2,j2,k2)+Fy2 * onemWx2 * onemWz2 
+  cury(i2p1,j2,k2)=cury(i2p1,j2,k2)+Fy2 *  Wx2    * onemWz2
+#ifndef twoD
+  cury(i2  ,j2,k2p1)= cury(i2  ,j2,k2p1)+Fy2 * onemWx2 * Wz2
+  cury(i2p1,j2,k2p1)= cury(i2p1,j2,k2p1)+Fy2 *  Wx2    * Wz2
+#endif
+  curz(i1,j1,k1)=curz(i1,j1,k1)+ Fz1 * onemWx1 * onemWy1
+  curz(i1p1,j1,k1)=curz(i1p1,j1,k1)+Fz1 * Wx1 * onemWy1
+  curz(i1,j1p1,k1)=curz(i1,j1p1,k1)+Fz1 * onemWx1 * Wy1
+  curz(i1p1,j1p1,k1)=curz(i1p1,j1p1,k1)+Fz1 * Wx1 * Wy1 
+  curz(i2,j2,k2)=curz(i2,j2,k2)+ Fz2 * onemWx2 * onemWy2 
+  curz(i2p1,j2,k2)=curz(i2p1,j2,k2)+ Fz2 * Wx2 * onemWy2 
+  curz(i2,j2p1,k2)=curz(i2,j2p1,k2)+ Fz2 * onemWx2 * Wy2
+  curz(i2p1,j2p1,k2)=curz(i2p1,j2p1,k2)+ Fz2 * Wx2 * Wy2 
+!endif
+
+#endif !cleancur
+
+107 continue
+  enddo !n=1,lecs
+
+
+
+  pind(1:lecs)=0
+
+  do n=1,lecs
+     n1=n+maxhlf
+     in=.true.
+     perx=0.
+     pery=0.
+     perz=0.
+
+     if(p(n1)%x .lt. minx .or. p(n1)%x .gt. maxx) then 
+ 		perx=sign(midx,p(n1)%x-minx)+sign(midx,p(n1)%x-maxx)    
+     endif
+
+     if(p(n1)%y .lt. miny .or. p(n1)%y .gt. maxy) then 
+ 		pery=sign(midy,p(n1)%y-miny)+sign(midy,p(n1)%y-maxy)    
+     endif
+
+     if(p(n1)%z .lt. minz .or. p(n1)%z .gt. maxz) then 
+ 		perz=sign(midz,p(n1)%z-minz)+sign(midz,p(n1)%z-maxz)    
+     endif
 		
-		if(periodicx.eq.1) then
-			perx=sign(real(.5*(mx-5.),8),real(p(n1)%x-3.,8))+sign(real(.5 &
-			*(mx-5.),8),(p(n1)%x)-mx+2.)
-			p(n1)%x=p(n1)%x-perx
-		endif
-		if(periodicx .eq. 0 ) then
-
-			in=(p(n1)%x.gt.x1in).and.(p(n1)%x.lt.x2in)
-
-!			in=(p(n1)%x.gt.leftwall-10).and.(p(n1)%x.lt.mx-2.0)
-!		
-!			if(wall)then
-!				in=((p(n1)%x.gt.leftwall-10).and.(p(n1)%x.le.xinject2))
-!			else
-!				in=((p(n1)%x.gt.3.0).and.(p(n1)%x.le.xinject2))
-!			endif
+		if(periodicx.eq.0) then      
+			in=(p(n1)%x+mxcum .gt. x1in) .and. (p(n1)%x+mxcum .lt. x2in)
 		endif
 		
-			
-		pery=sign(.5*(my-5.),p(n1)%y-3.)+sign(.5*(my-5.),p(n1)%y-my+2.)
-		if(pery .ne. 0 .and. .not. in) pery=0
-
-		if(pery .lt. 0 .and. modulo(rank,sizey).eq.0  .and. in) then
-			pery=sign(.5*(mylast-5.),p(n1)%y-3.)+sign(.5*(mylast-5.),p(n1) &
-			%y-mylast +2.) !put it at the top of last rank
+		if(periodicy.eq.0 .and. in) then 
+			in=(p(n1)%y+mycum .gt. y1in) .and. (p(n1)%y+mycum .lt. y2in)
 		endif
-		if(pery .lt. 0 .and. modulo(rank,sizey).eq.sizey-1 .and. in) then
-			pery=sign(.5*(myall-5.),p(n1)%y-3.)+sign(.5*(myall-5.),p(n1)%y &
-			-myall +2.) !put it at the top of the size-2
+		
+#ifndef twoD			
+		if(periodicz.eq.0 .and. in) then      
+			in=(p(n1)%z+mzcum .gt. z1in) .and. (p(n1)%z+mzcum .lt. z2in)
+		endif		
+#endif
+  !to discard a particle
+		if(.not. in) then
+			perx=0
+			pery=0
+			perz=0
+		endif		
+		
+		! to send to another processor
+		if(perx.ne.0 .and. in .and. sizex.ne.1) then
+			in=.false.	
+			pery=0
+			perz=0
 		endif
-
-		if(pery .ne. 0 .and. in ) in=.false.
+		
+		! assume non-uniform mx in general
+		if(perx.lt.0 .and. sizex.ne.1) then		
+			! minus rank (-x direction)		
+			i1=(rank/sizex)*sizex + modulo(rank-1,sizex) 
+			perx=-(mxl(i1+1)-5.)				
+		endif
+		
+		p(n1)%x=p(n1)%x-perx		
+		
+		! to send to another processor
+		if(pery.ne.0 .and. in .and. sizey.ne.1) then
+			in=.false.	
+			perx=0
+			perz=0
+		endif
+		
+		! assume non-uniform my
+		if(pery.lt.0 .and. sizey.ne.1) then		
+			! left rank	(-y direction)	
+			j1=modulo(rank/sizex - 1,sizey)*sizex+rank/(sizex*sizey)*(sizex*sizey) &
+				+ modulo(rank,sizex) 
+			pery=-(myl(j1+1)-5.)				
+		endif
 		
 		p(n1)%y=p(n1)%y-pery
 		
 #ifndef twoD
-			perz=sign(.5*(mz-5.),p(n1)%z-3.)+sign(.5*(mz-5.),p(n1)%z-mz +2.)
-			
-			if(perz .ne. 0 .and. .not. in  ) perz=0
-			if(perz .lt. 0 .and. rank/sizey.eq.0  .and. in) then
-				perz=sign(.5*(mzlast-5.),p(n1)%z-3.)+sign(.5*(mzlast-5.),p(n1) &
-				%z-mzlast +2.) !put it at the top of last rank
-			endif
-			if(perz .lt. 0 .and. rank/sizey.eq.sizez-1  .and. in) then
-				perz=sign(.5*(mzall-5.),p(n1)%z-3.)+sign(.5*(mzall-5.),p(n1)%z &
-				-mzall +2.) !put it at the top of the size-2
-			endif
-			if(perz .ne. 0 .and. in ) in=.false.
-#else
-			perz=0			
-			perz=sign(.5*(6-5),p(n1)%z-3.)+sign(.5*(6-5.),p(n1)%z-6 +2.)
-			p(n1)%z=p(n1)%z-perz
-			perz=0
+		! to send to another processor
+		if(perz .ne. 0 .and. in ) then
+			in=.false.	
+			perx=0
+			pery=0
+		endif	
+		! assume non-uniform mz
+		if(perz .lt. 0) then		
+			! down rank	(-z direction)	
+			k1=modulo(rank/(sizex*sizey) - 1,sizez)*(sizex*sizey) + & 
+			      modulo(rank,sizex*sizey) 
+			perz=-(mzl(k1+1)-5.)				
+		endif
 #endif
-		
-		p(n1)%z=p(n1)%z-perz
-		
+
+		p(n1)%z=p(n1)%z-perz		
+			
 		if(in) go to 59
 		nlecout=nlecout+1
 		
+#ifndef twoD		
 		if(perz .lt. 0) then
 			!this particle is going to the processor below
 			LenLecOutDwn=LenLecOutDwn+1
-			poutdwn(LenIonOutDwn+LenLecOutDwn)=p(n1)
+			call copyprt(p(n1),poutdwn(LenIonOutDwn+LenLecOutDwn))
 		endif
 
 		if(perz .gt. 0) then
 			!this particle is going to the processor above
 			LenLecOutUp=LenLecOutUp+1
-			poutup(LenIonOutUp+LenLecOutUp)=p(n1)
-		endif
-		
-		if(pery .lt. 0) then
+			call copyprt(p(n1),poutup(LenIonOutUp+LenLecOutUp))
+                endif
+#endif
+
+		if(sizey .ne. 1) then
+                if(pery .lt. 0) then
 			!this particle is going to the processor on the left
 			LenLecOutLft=LenLecOutLft+1
-			poutlft(LenIonOutLft+LenLecOutLft)=p(n1)
+			call copyprt(p(n1),poutlft(LenIonOutLft+LenLecOutLft))
 		endif
 
 		if(pery .gt. 0) then
 			!this particle is going to the processor on the right
 			LenLecOutRgt=LenLecOutRgt+1
-			poutrgt(LenIonOutRgt+LenLecOutRgt)=p(n1)
+			call copyprt(p(n1),poutrgt(LenIonOutRgt+LenLecOutRgt))
+                endif
+		endif  !if(sizey .ne. 1)
+		
+		if(sizex .ne. 1) then
+		if(perx .lt. 0) then
+			!this particle is going to the processor on the left
+			LenLecOutMinus=LenLecOutMinus+1
+			call copyprt(p(n1),poutminus(LenIonOutMinus+LenLecOutMinus))
 		endif
+
+		if(perx .gt. 0) then
+			!this particle is going to the processor on the right
+			LenLecOutPlus=LenLecOutPlus+1
+			call copyprt(p(n1),poutplus(LenIonOutPlus+LenLecOutPlus))
+		endif
+		endif	!if(sizex .ne. 1)
 		
-		!  Replace by the electron from the top of the stack:
-		
-		p(n1)=p(maxhlf+lecs)
-		
-		lecs=lecs-1
-		n=n-1
-		59	n=n+1        
-		if(n.le.maxhlf+lecs)go to 53       
-		
+  pind(n)=1 !mark this particle for deletion; use n, not n1
+59 continue
+  
+enddo !n=1,lecs
 		if(debug) print *, rank,":","deposited lecs","step=",lap 
-		
+!now clean particles
+  lecs0=lecs
+  do n=1,lecs0
+     if(pind(n) .ne. 0) then
+        do while (pind(n) .ne. 0) 
+           call copyprt(p(maxhlf+lecs),p(maxhlf+n))
+           pind(n)=pind(lecs)
+           pind(lecs)=0
+           lecs=lecs-1
+        enddo
+     endif
+  enddo		
 	endif !if lecs .gt. 0
 	
-	nioneject=LenIonOutUp+LenIonOutDwn+LenIonOutLft+LenIonOutRgt
+	nioneject=LenIonOutUp+LenIonOutDwn+LenIonOutLft+LenIonOutRgt+&
+			  LenIonOutMinus+LenIonOutPlus
 	
-	nleceject=LenLecOutUp+LenLecOutDwn+LenLecOutLft+LenLecOutRgt
-
-
+	nleceject=LenLecOutUp+LenLecOutDwn+LenLecOutLft+LenLecOutRgt+&
+			  LenLecOutMinus+LenLecOutPlus
+	
+			  
+	
 end subroutine deposit_particles
-
 
 #ifdef twoD
 end module m_particles_movedeposit

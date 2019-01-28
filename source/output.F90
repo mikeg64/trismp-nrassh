@@ -6,14 +6,16 @@
 !
 !
 
+
 #ifdef twoD 
 
 module m_output
-
+  
 	use m_system
 	use m_aux
 	use m_communications
 	use m_fields
+	use m_fieldboundaries
 	use m_particles
 	use m_domain
 	use m_globaldata
@@ -28,6 +30,7 @@ module m_output_3d
 	use m_aux_3d
 	use m_communications_3d
 	use m_fields_3d
+	use m_fieldboundaries_3d
 	use m_particles_3d
 	use m_domain_3d
 	use m_globaldata_3d
@@ -35,9 +38,11 @@ module m_output_3d
 	use m_user_3d
 #endif
 
+#ifdef HDF5
 	use hdf5
-implicit none
-	
+#endif	
+
+	implicit none
 	
 	private
 
@@ -57,11 +62,15 @@ implicit none
 	real(dprec) :: time_end, time_diff, time_beg, timespan
 
 	integer(8) :: laprestart, namedrestartint
-	integer :: intrestlocal, last, interval, torqint, istep1, graphics, ips, intrestart, dlap, &
+	integer :: intrestlocal, last, interval, torqint, istep1, graphics, ips, intrestart, &
 			   pltstart, restart_status, stride, sele, seli, idx, idy, idz, istep
-
+    ! save test particles
+	integer :: dlaplec, dlapion, teststartlec, teststartion, testendlec, testendion
+	! save fields frequently
 			   
-	logical :: writetestpart, selectprt 
+	! particle tracking		   
+	logical :: writetestlec, writetestion
+	
 	character (len=5) :: indchar
 	character (len=7) :: lapchar
 	character (len=9) :: frootprt, frootfld, froottrq
@@ -77,9 +86,11 @@ implicit none
     temporary15,temporary16
 
 	real(sprec), allocatable, dimension(:,:,:) :: nav, navi
-	type(prtnum),allocatable :: selprti(:), selprte(:) 
+	type(prtnum), allocatable :: selprti(:), selprte(:) 
 	
 	real, allocatable, dimension(:,:,:) :: gam, pxm, pym, pzm
+
+    logical :: xyzspec
 
 !-------------------------------------------------------------------------------
 !	INTERFACE DECLARATIONS
@@ -96,11 +107,14 @@ implicit none
 	! public variables 
 
 	public :: frestartprtlap, frootprt, frootfld, froottrq, & 									   !used in restart module
-			   last, interval, torqint, graphics, ips, c_omp, writetestpart, &     ! used in initialize module
-			  selectprt, intrestlocal, rankchar, jobname, frestartfld, frestartprt, laprestart, &  ! used in initialize module
+			  last, interval, torqint, graphics, ips, c_omp, &     ! used in initialize module
+			  intrestlocal, rankchar, jobname, frestartfld, frestartprt, laprestart, &  ! used in initialize module
 			  lapchar, frestartprtloc, frestartfldloc, idx, idy, idz, timespan, time_beg, &        ! used in initialize module
 			  intrestart, namedrestartint, pltstart, istep1, stride, istep						   ! used in initialize module
-	
+
+	public :: writetestlec, writetestion, dlaplec, dlapion, teststartlec, teststartion, &
+			  testendlec, testendion
+		
 
 !-------------------------------------------------------------------------------
 !	MODULE PROCEDURES AND FUNCTIONS
@@ -123,7 +137,7 @@ subroutine read_input_output()
 	
 	! local variables 
 	
-	integer :: lwritetestpart, lselectprt
+	integer :: lwritetestion, lwritetestlec
 	
 	call inputpar_geti_def("output", "interval", 50, interval)
 	call inputpar_geti_def("output", "torqint", 2000000, torqint)
@@ -133,20 +147,30 @@ subroutine read_input_output()
 	call inputpar_geti_def("output", "istep1", 2, istep1)
 	call inputpar_geti_def("output", "stride", 100, stride)
 
-	call inputpar_geti_def("output", "writetestpart", 0, lwritetestpart)
-	call inputpar_geti_def("output", "selectprt", 1, lselectprt)
+	! save pre-selected test particles
+	! dlap: save interval, initest: initial time step to save
+	call inputpar_geti_def("output", "writetestlec", 0, lwritetestlec)
+	call inputpar_geti_def("output", "dlaplec", 100, dlaplec)
+	call inputpar_geti_def("output", "teststartlec", 0, teststartlec)
+	call inputpar_geti_def("output", "testendlec", 0, testendlec)
 	
-	if (lwritetestpart==1) then
-		writetestpart=.true.
+	call inputpar_geti_def("output", "writetestion", 0, lwritetestion)
+	call inputpar_geti_def("output", "dlapion", 1000, dlapion)
+	call inputpar_geti_def("output", "teststartion", 0, teststartion)
+	call inputpar_geti_def("output", "testendion", 0, testendion)
+	
+	if (lwritetestlec==1) then
+		writetestlec=.true.
 	else
-		writetestpart=.false.
+		writetestlec=.false.
 	endif
 	
-	if (lselectprt==1) then
-		selectprt=.true.
+	if (lwritetestion==1) then
+		writetestion=.true.
 	else
-		selectprt=.false.
+		writetestion=.false.
 	endif
+
 
 end subroutine read_input_output
 
@@ -187,14 +211,14 @@ subroutine output_parameters_in_use()
 	print *, "Read the following parameters from the input file"
 	print *, "mx0, my0, mz0", mx0, my0, mz0
 	print *, "maxptl0", maxptl0
-	print *, "sizey", sizey, "caseinit", caseinit
+	print *, "sizex",sizex,"sizey", sizey !, "caseinit", caseinit
 	print *, "c,sigma, c_omp, gamma0,delgam,ppc0,me,mi,freevar", c, &
 	sigma,c_omp,  gamma0,  delgam ,ppc0,   me, mi ,dummyvar 
 	print *, "irestart", irestart,"intrestart",intrestart,"laprest", &
 	laprestart,"namedrestint", namedrestartint, intrestlocal
 	print *,"periodicx,periodicy,periodicz",periodicx,periodicy,periodicz
-	print *," movwin,wall,shiftint,shiftstart",movwin,wall,shiftint,shiftstart
-	print *," Highorder",Highorder
+	print *," wall,shiftint,shiftstart",wall,shiftint,shiftstart
+	print *," Highorder", highorder
 	print *, "Corr", corr
 	print *, "Last", last
 	print *, "interval, torqint", interval, torqint
@@ -203,15 +227,15 @@ subroutine output_parameters_in_use()
 	print *, "Graphics, ips", graphics, ips
 	print *, "debug", debug
 	print *, "btheta, bphi", btheta, bphi
-	print *,"cooling, acool",cooling, acool
-	print *,"writetestpart, selectprt",writetestpart,selectprt
+	print *,"writetestlec", writetestlec
+	print *,"writetestion", writetestion
 	print *, "rank", rank, periodicx, radiationx, gamma0
+	print *, "buffsize", buffsize
 
 #ifdef HDF5
 	print *,"hdf5 def"
 #endif
 
-	print *, "cooling=", cooling, acool
 	print *, "maxptl0",maxptl0
 	print *, rank,":", "mz", mz, "mzall", mzall,"mz0",mz0
 	print *, rank,":","mzlast",mzlast
@@ -224,6 +248,11 @@ subroutine output_parameters_in_use()
 
 	print *,"Hello, world! I am ", rank, " of ", size0 
 	print *,rank,":", frootprt, " ", frootfld," ",frestartfld
+	
+	if(rank .eq. 0) then
+		print*, 'local mx=', mxl
+	endif	
+	
 
 end subroutine output_parameters_in_use
 
@@ -240,39 +269,42 @@ subroutine Diagnostics()
 
 	implicit none
 	
-		dlap=25
+        !user input
+        ! if true then save spectra of single processors
+        xyzspec=.false.
+        !end user input
 
-		!     if(testpartout .and. modulo(lap,testpartint) .eq. 0) then 
-		
-		if(writetestpart) then
-			if(modulo(lap,dlap) .eq. 0) then 
-				if (selectprt) then
-					call write_testp1()
-				else
-					if (lap .gt. last-int(0.5*dlap)) then
-						call write_testp0()
-						prt_first=.false.
-					endif
-				endif
-			endif
+        ! save testparticles
+		if(writetestlec) then			
+			if(lap .ge. teststartlec .and. modulo((lap-pltstart),dlaplec) .eq.0 &
+			   .and. lap .le. testendlec) then 					
+					call write_test_e()
+					prt_first_lec=.false.
+			endif			
 		endif
 		
+		if(writetestion) then			
+			if(lap .ge. teststartion .and. modulo((lap-pltstart),dlapion) .eq.0 &
+			   .and. lap .le. testendion) then 										
+					call write_test_p()
+					prt_first_ion=.false.
+			endif			
+		endif
+					
 		! add output, diagnostics, checkpointing, etc
-
 		
-		if(debug) print *,rank,": output", "step=", lap ,"step=",lap
-		
-		!!!!!-->        
+		if(debug) print *,rank,": output", "step=", lap ,"step=",lap      
 
+                call write_restart()
 #ifdef HDF5
-			call output_par()
-			call save_spectrum()
-			call save_momentumspec()
+                call save_param()
+                call output_tot()
+!                call output_hug()
+               call save_spectrum()
+!              call save_spectrum_2d()
+!                call save_momentumspec()
+!                call save_velocityspec()
 #endif
-		
-		!         call output()
-		
-		!call timer(12)
 
 		if(debug) print *,rank,": b4 diagnost", "step=", lap
 
@@ -285,7 +317,7 @@ end subroutine Diagnostics
 !-------------------------------------------------------------------------------
 ! 						subroutine do_diagnostics					 
 !																		
-!
+! Checks for overflow in the number of particles
 !  							
 !-------------------------------------------------------------------------------
 
@@ -310,40 +342,37 @@ subroutine do_diagnostics()
 	
 	redparts(1)=ions
 	redparts(2)=lecs
-	redparts(3)=nionout
-	redparts(4)=nlecout
-	redparts(5)=injectedions
-	redparts(6)=injectedlecs
-	redparts(7)=receivedions
-	redparts(8)=receivedlecs
-	redparts(9)=nioneject
-	redparts(10)=nleceject
+!	redparts(3)=nionout
+!	redparts(4)=nlecout
+!	redparts(5)=injectedions
+!	redparts(6)=injectedlecs
+!	redparts(7)=receivedions
+!	redparts(8)=receivedlecs
+!	redparts(9)=nioneject
+!	redparts(10)=nleceject
 	
 	call MPI_reduce(redparts,reduc,10,mpi_integer8,mpi_sum,0 &
 	,MPI_Comm_World,ierr)
 	
-	if(rank.eq.0) print *, "lap",lap, reduc(1), reduc(2)
+	if(rank.eq.0) print *, "lap", lap, reduc(1), reduc(2)
 	
 	if(ions.gt.maxhlf .or. lecs.gt.maxhlf) then 
 		print *,rank,": OVERFLOW ions,lecs,maxhlf",ions,lecs,maxhlf
 		stop
 	endif
 	
-	dz=.1
-	
-	
-	if(modulo(lap,torqint).eq. 0 .and. graphics .eq.1 ) then 
-		call meanq_dens_cur()
-	endif
+!	dz=.1
+
+!	if(modulo(lap,torqint).eq. 0 .and. graphics .eq.1 ) then 
+!		call meanq_fld_cur('tdens')
+!	endif
 	
 end subroutine do_diagnostics
 
-
-
 !-------------------------------------------------------------------------------
-! 						subroutine save_spectrum					 
+! 						subroutine save_spectrum				 
 !																		
-!
+! Saves energy spectrum of particles, in x slices
 !  							
 !-------------------------------------------------------------------------------
 
@@ -353,226 +382,265 @@ subroutine save_spectrum()
 	
 	! local variables
 	
-	integer ::gambins, xbin, gbin, ishock, ierr
-	real ishockall
-	real gammin, gammax, gammax1, dgam,dxslice, c, gam
-	real maxdens, mindens, middens, gammin1
-	logical logscale
-	integer ::n, i, ind
+	integer :: gambins, xbin, nbins, gbin,  ierr
+	real gammin, gammax, gammax1, gammin1, dgam
+	real dxslice, gam
+	integer :: n, i, k, ind, procn
+	integer :: iL, iR, jL, jR, mxmin, mxmax
+	real vr, gvr, vx, vy, vz, uprime, vprime, wprime, gamprime
 	character fname*20
 	character(len=10) dsetname(20)
-	
+
 #ifdef HDF5
 		integer(HID_T) :: file_id       ! File identifier 
 		integer(HID_T) :: dset_id       ! Dataset identifier 
 		integer(HID_T) :: dspace_id
-		integer(HSIZE_T) data_dims(2), data_dims1(1)
+		integer(HSIZE_T) data_dims2(2), data_dims1(1)
+        integer(HSIZE_T) data_dims3(3)
 #endif
 
 	integer ::datarank, error
 	
-	real, allocatable:: spece(:,:), specp(:,:), specin(:,:)
-	real, allocatable :: xgamma(:), xslice(:), dens(:)
-	real, allocatable :: dens1(:), densin(:), dens2(:)!, densin1(:)
+	real, allocatable:: spece(:,:), specp(:,:)
+   	real, allocatable::	specein(:,:), specpin(:,:)	
+	real, allocatable :: xgamma(:), xslice(:)
 	
+	integer :: status(MPI_STATUS_SIZE)
+	
+    !spectrum in the flow rest frame
+	real, allocatable :: speceprime(:,:), specpprime(:,:)
+	real, allocatable :: umean(:), vmean(:), wmean(:), numdens(:)	! mean flow speed, mean number density
 
-	logscale=.true.
-	gammin=1
-	gammax=1 !+(gamma0-1)*100
-	gambins=100*2
-	dxslice=100
-	
-	!      debug=.true.
-	
-	if(lap .ge.pltstart .and. modulo((lap-pltstart),interval) .eq.0 .or. lap .eq. -190001   )then
+	if(lap .ge.pltstart .and. modulo((lap-pltstart),interval) .eq.0)then
 		
+		gammin=1
+		gammax=1
+		gambins=100*2	! number of energy bins
+
+		mxmin=3
+		mxmax=mx0-2
+		
+		nbins=max((mxmax-mxmin)/100,1)
+	
+		allocate(spece(nbins,gambins),specp(nbins,gambins))
+		allocate(xgamma(gambins),xslice(nbins))
+		allocate(specpin(nbins,gambins),specein(nbins,gambins))
+
+		!flow rest frame *********		
+		allocate(speceprime(nbins,gambins),specpprime(nbins,gambins))
+		allocate(umean(nbins),vmean(nbins),wmean(nbins))
+		allocate(numdens(nbins))
+		!********************		
+
+		!bin size in each cpu. note that bin sizes are different in different cpus
+		dxslice=1.*(mxmax-mxmin)/nbins
+		do i=1, nbins
+			xslice(i)=dxslice*(i-1)+.5*dxslice+mxmin
+		enddo
+		
+		! local gamma min and max 
 		do i=1,ions
 			gam=sqrt(1+(p(i)%u**2+p(i)%v**2+p(i)%w**2)) 
 			if(gam .gt. gammax) gammax=gam
 			if(gam .lt. gammin) gammin=gam
+			
 		enddo
 		do i=maxhlf+1,maxhlf+lecs
 			gam=sqrt(1+(p(i)%u**2+p(i)%v**2+p(i)%w**2)) 
 			if(gam .gt. gammax) gammax=gam
 			if(gam .lt. gammin) gammin=gam
+			
 		enddo
 		
+		! global gamma min and max
 		call mpi_allreduce(gammax,gammax1,1,mpi_read,mpi_max &
 		,mpi_comm_world,ierr)
-		gammax=gammax1
+		gammax=gammax1 
 		call mpi_allreduce(gammin,gammin1,1,mpi_read,mpi_min &
 		,mpi_comm_world,ierr)
 		gammin=gammin1
 		
-		gammin=max(gammin, 1.+1e-5)
-		
-		dgam=(gammax-gammin)/gambins
-		
-		if(logscale)dgam=(log10(gammax-1)-log10(gammin-1))/gambins
-		
-		allocate(spece(max(int(mx0/dxslice),1),gambins), dens(max(int(mx0/10),1)))
-		allocate(xgamma(gambins),xslice(max(int(mx0/dxslice),1)) &
-		,dens2(max(int(mx0/10),1)))
-		allocate(specp(max(int(mx0/dxslice),1),gambins))
-		allocate(specin(max(int(mx0/dxslice),1),gambins))
-		allocate(dens1(max(int(mx0/dxslice),1)))
-		allocate(densin(max(int(mx0/dxslice),1)))!,densin1(mx0/10) )
-		
-		do i=1,gambins
+		gammin=max(gammin, 1.+1e-6)		
+		dgam=(log10(gammax-1)-log10(gammin-1))/gambins		
+			
+		do i=1, gambins
 			xgamma(i)=10.**((i-1.)*dgam+log10(gammin-1))
 		enddo
+
 		
-		spece(:,:)=0.
-		specp(:,:)=0.
-		specin(:,:)=0.
-		dens1(:)=0.
-		dens(:)=0.
-		
-		!find where is the shock
-		maxdens=0
-		mindens=0
-		do n=1,ions
-			i=int(p(n)%x)
-			dens(max(min(int(i/10.+1),mx0/10),1))=dens(max(min(int(i/10.+1) &
-			,mx0/10),1))+1
+		umean=0.
+		vmean=0.
+		wmean=0.
+		numdens=0.
+		specp=0.	
+		specpprime=0.
+			
+       !(ion) flow mean velocity ***********
+        do i=1,ions
+		  xbin=int((p(i)%x+mxcum-mxmin)/dxslice+1)
+		  if(xbin .ge. 1 .and. xbin .le. nbins) then
+		    numdens(xbin)=numdens(xbin)+real(splitratio)**(1.-real(p(i &
+					)%splitlev))*p(i)%ch
+		    gam=sqrt(1+(p(i)%u**2+p(i)%v**2+p(i)%w**2)) 
+		    umean(xbin)=umean(xbin)+(p(i)%u/gam)*real(splitratio)**(1.-real(p(i &
+					)%splitlev))*p(i)%ch		
+		    vmean(xbin)=vmean(xbin)+(p(i)%v/gam)*real(splitratio)**(1.-real(p(i &
+					)%splitlev))*p(i)%ch		
+			wmean(xbin)=wmean(xbin)+(p(i)%w/gam)*real(splitratio)**(1.-real(p(i &
+					)%splitlev))*p(i)%ch				
+		  endif
 		enddo
 		
-		call mpi_allreduce(dens,dens2,max(mx0/10,1),mpi_read,mpi_sum &
-		,mpi_comm_world,ierr)
-		
-		dens=dens2/size0
-		
-		maxdens=maxval(dens)
-		do i=1,mx0/10
-			if(dens(i) .gt. maxdens/10.) then
-				if(mindens.lt.dens(i)) mindens=dens(i)
-			endif
-		enddo
-		
-		middens=minval(abs(dens-(maxdens+mindens)/2.))
-		
-		do i=1,mx/10
-			if(abs(dens(i)-(maxdens+mindens)/2.) .eq. middens) then
-				ishock=i*10. -5
-			endif
-		enddo
-		
-		709  continue
-		
-		if(mx .lt. 100) ishock=1
-		
-		if(rank.eq.0) print *, rank,": ishock=", ishock
-		
-		if(rank .eq. 0) print *, rank,": Shock location=", ishock
-		
-		
-		!define boundaries of x zones. Move them to fit the shock 
-		!at boundary between 2 cells
-	
-		do i=1,max(int(mx0/dxslice),1)
-			!just do linear filling of slices
-			if(debug) print *, rank,": writing xslice,  i=",i
-			xslice(i)=(i-1)*dxslice+dxslice/2
-		enddo
-	
+		umean=umean/numdens
+		vmean=vmean/numdens
+		wmean=wmean/numdens
+
+						
 		!compute the spectrum
-	
 		if(debug) print *, "in spec, b4 ions"
 		do i=1,ions
-			!the shock is always going to be in the middle of the output grid
-			!        xbin=int((p(i)%x-ishock)/dxslice+1)+(mx/dxslice)/2
-			!one of the grids always falls on the shock, but shock moves -- this captures
-			!the whole box
-			!         xbin=int((p(i)%x-ishock)/dxslice+1)+(ishock*1./dxslice)
-			
-			xbin=int(p(i)%x/dxslice+1)
-			
-			if(xbin .ge. 1 .and. xbin .le. max(int(mx0/dxslice),1)) then
-				gam=sqrt(1+(p(i)%u**2+p(i)%v**2+p(i)%w**2)) 
-				
-				!            gbin=int(gam/dgam+1)
-				
-				!            if(logscale)gbin=int(alog10(gam)/dgam+1)
-				
-				if(logscale)gbin=int((alog10(gam-1)-alog10(gammin-1))/dgam+1)
-				if(gbin .ge. 1 .and. gbin .le. gambins ) then 
-					dens1(xbin)=dens1(xbin)+real(splitratio)**(1.-real(p(i &
-					)%splitlev))*p(i)%ch
-					
+			xbin=int((p(i)%x+mxcum-mxmin)/dxslice+1)			
+			if(xbin .ge. 1 .and. xbin .le. nbins) then
+				gam=sqrt(1+(p(i)%u**2+p(i)%v**2+p(i)%w**2)) 								
+				gbin=int((alog10(gam-1)-alog10(gammin-1))/dgam+1)
+				if(gbin .ge. 1 .and. gbin .le. gambins ) then 				
 					specp(xbin,gbin)=specp(xbin,gbin)+real(splitratio)**(1. &
-					-real(p(i)%splitlev))*p(i)%ch
+					-real(p(i)%splitlev))*p(i)%ch                                                     
 				endif
-			endif
+				!energy sepectrum in the flow rest frame
+				!Lorentz transformation in the flow rest frame
+				vx=umean(xbin)
+				vy=vmean(xbin)
+				vz=wmean(xbin)
+				vr=sqrt(vx**2+vy**2+vz**2)
+				gvr=1./sqrt(1.-vr**2)			
+				uprime= -vx*gvr*gam+ &
+					    (1+(gvr-1)*vx**2/vr**2)*p(i)%u+ &
+						(gvr-1)*vx*vy/vr**2*p(i)%v+ &
+						(gvr-1)*vx*vz/vr**2*p(i)%w
+				vprime= -vy*gvr*gam+ &
+						(gvr-1)*vx*vy/vr**2*p(i)%u+ &
+						(1+(gvr-1)*vy**2/vr**2)*p(i)%v+ &
+						(gvr-1)*vy*vz/vr**2*p(i)%w
+				wprime= -vz*gvr*gam+ &
+						(gvr-1)*vx*vz/vr**2*p(i)%u+ &
+						(gvr-1)*vy*vz/vr**2*p(i)%v+ &
+						(1+(gvr-1)*vz**2/vr**2)*p(i)%w
+			    gamprime=sqrt(1+(uprime**2+vprime**2+wprime**2))
+			    gbin=int((alog10(gamprime-1)-alog10(gammin-1))/dgam+1)	   
+			    if(gbin .ge. 1 .and. gbin .le. gambins ) then 				
+					specpprime(xbin,gbin)=specpprime(xbin,gbin)+real(splitratio)**(1. &
+					-real(p(i)%splitlev))*p(i)%ch                                      
+				endif
+			endif !if(xbin .ge. 1 .and. xbin .le. nxbins) then
 		enddo
-	
+				
+		call mpi_allreduce(specp,specpin,nbins*gambins,mpi_read,mpi_sum &
+		,mpi_comm_world,ierr)
+        specp=specpin
+		
+        call mpi_allreduce(specpprime,specpin,nbins*gambins,mpi_read,mpi_sum &
+		,mpi_comm_world,ierr)
+        specpprime=specpin  
+
+        do i=1, nbins
+			specp(i,:)=specp(i,:)/xgamma(:)
+			specpprime(i,:)=specpprime(i,:)/xgamma(:)
+		enddo
+        
+        
+		umean=0.
+		vmean=0.
+		wmean=0.
+		numdens=0.
+		spece=0.
+		speceprime=0.
+		
+       !(electron) flow mean velocity ***********
+        do i=maxhlf,maxhlf+lecs
+		  xbin=int((p(i)%x+mxcum-mxmin)/dxslice+1)
+		  if(xbin .ge. 1 .and. xbin .le. nbins) then
+		    numdens(xbin)=numdens(xbin)+real(splitratio)**(1.-real(p(i &
+					)%splitlev))*p(i)%ch
+		    gam=sqrt(1+(p(i)%u**2+p(i)%v**2+p(i)%w**2)) 
+		    umean(xbin)=umean(xbin)+(p(i)%u/gam)*real(splitratio)**(1.-real(p(i &
+					)%splitlev))*p(i)%ch		
+		    vmean(xbin)=vmean(xbin)+(p(i)%v/gam)*real(splitratio)**(1.-real(p(i &
+					)%splitlev))*p(i)%ch		
+			wmean(xbin)=wmean(xbin)+(p(i)%w/gam)*real(splitratio)**(1.-real(p(i &
+					)%splitlev))*p(i)%ch				
+		  endif
+		enddo
+		
+		umean=umean/numdens
+		vmean=vmean/numdens
+		wmean=wmean/numdens        
+        
+        
 		if(debug) print *, "in spec, b4 lecs"
 		do i=maxhlf,maxhlf+lecs
-			!the shock is always going to be in the middle of the output grid
-			!         xbin=int((p(i)%x-ishock)/dxslice+1)+(mx/dxslice)/2
-			!one of the grids always falls on the shock, but shock moves -- this captures
-			!the whole box
-			!         xbin=int((p(i)%x-ishock)/dxslice+1)+(ishock*1./dxslice)
-			
-			xbin=int(p(i)%x/dxslice+1)
-			
-			if(xbin .ge. 1 .and. xbin .le. max(int(mx0/dxslice),1)) then
-				gam=sqrt(1+(p(i)%u**2+p(i)%v**2+p(i)%w**2)) 
+			xbin=int((p(i)%x+mxcum-mxmin)/dxslice+1)
 				
-				!            gbin=int(gam/dgam+1)
-				
-				!            if(logscale)gbin=int(alog10(gam)/dgam+1)
-				
-				if(logscale)gbin=int((alog10(gam-1)-alog10(gammin-1))/dgam+1)
-				
-				if(gbin .ge. 1 .and. gbin .le. gambins ) then 
-					dens1(xbin)=dens1(xbin)+real(splitratio)**(1.-real(p(i &
-					)%splitlev))*p(i)%ch
+			if(xbin .ge. 1 .and. xbin .le. nbins) then
+				gam=sqrt(1+(p(i)%u**2+p(i)%v**2+p(i)%w**2)) 								
+				gbin=int((alog10(gam-1)-alog10(gammin-1))/dgam+1)
+				if(gbin .ge. 1 .and. gbin .le. gambins ) then 				
 					spece(xbin,gbin)=spece(xbin,gbin)+real(splitratio)**(1. &
-					-real(p(i)%splitlev))*p(i)%ch
+					-real(p(i)%splitlev))*p(i)%ch                                             
 				endif
-			endif         
+				!energy sepectrum in the flow rest frame
+				!Lorentz transformation in the flow rest frame
+				vx=umean(xbin)
+				vy=vmean(xbin)
+				vz=wmean(xbin)
+				vr=sqrt(vx**2+vy**2+vz**2)
+				gvr=1./sqrt(1.-vr**2)
+				uprime= -vx*gvr*gam+ &
+					    (1+(gvr-1)*vx**2/vr**2)*p(i)%u+ &
+						(gvr-1)*vx*vy/vr**2*p(i)%v+ &
+						(gvr-1)*vx*vz/vr**2*p(i)%w
+				vprime= -vy*gvr*gam+ &
+						(gvr-1)*vx*vy/vr**2*p(i)%u+ &
+						(1+(gvr-1)*vy**2/vr**2)*p(i)%v+ &
+						(gvr-1)*vy*vz/vr**2*p(i)%w
+				wprime= -vz*gvr*gam+ &
+						(gvr-1)*vx*vz/vr**2*p(i)%u+ &
+						(gvr-1)*vy*vz/vr**2*p(i)%v + &
+						(1+(gvr-1)*vz**2/vr**2)*p(i)%w
+			    gamprime=sqrt(1+(uprime**2+vprime**2+wprime**2))
+			    gbin=int((alog10(gamprime-1)-alog10(gammin-1))/dgam+1)	   
+			    if(gbin .ge. 1 .and. gbin .le. gambins ) then 				
+					speceprime(xbin,gbin)=speceprime(xbin,gbin)+real(splitratio)**(1. &
+					-real(p(i)%splitlev))*p(i)%ch                                           
+				endif
+			endif  !if(xbin .ge. 1 .and. xbin .le. nxbins) then
 		enddo
 		
-		call MPI_BARRIER(MPI_COMM_WORLD,ierr)
-		if(debug) print *, rank, "reducing spectra"
 		
-		!now reduce all to rank 0, which will save everything
+        call mpi_allreduce(spece,specein,nbins*gambins,mpi_read,mpi_sum &
+		,mpi_comm_world,ierr)
+        spece=specein
+        
+        call mpi_allreduce(speceprime,specein,nbins*gambins,mpi_read,mpi_sum &
+		,mpi_comm_world,ierr)
+        speceprime=specein        
+
+        do i=1, nbins
+			spece(i,:)=spece(i,:)/xgamma(:)
+			speceprime(i,:)=speceprime(i,:)/xgamma(:)
+		enddo        
+        
+  	
+		if(debug) print*, rank, "done spec calculation, start writing"
 		
-		call mpi_allreduce(spece,specin,max(int(mx0/dxslice),1)*gambins &
-		,mpi_read,mpi_sum,mpi_comm_world,ierr)
-		
-		spece=specin
-		specin(:,:)=0.
-		
-		call mpi_allreduce(specp,specin,max(int(mx0/dxslice),1)*gambins &
-		,mpi_read,mpi_sum,mpi_comm_world,ierr)
-		
-		specp=specin
-		
-		call mpi_allreduce(dens1,densin,max(int(mx0/dxslice),1) &
-		,mpi_read,mpi_sum,mpi_comm_world,ierr)
-		
-		dens1=densin/size0
-		
-		
-		do i=1,max(int(mx0/dxslice),1)
-			spece(i,:)=spece(i,:)/((xgamma)*alog10(10.))
-			specp(i,:)=specp(i,:)/((xgamma)*alog10(10.))
-		enddo
-	
-		call MPI_BARRIER(MPI_COMM_WORLD,ierr)
-		
-		if(debug) print *, rank, "done spec calculation, start writing"
-		
-		if(rank .eq. 0) then 
-		
-			!         print *, "specp", specp      
+		if(rank .eq. 0) then     
 			
 			ind=(lap-pltstart)/interval
 			
 			write(indchar,"(i3.3)")ind
 			
 			fname="output/spect."//trim(indchar)
+            print *,"",fname
 			
 			open(unit=11,file=fname,form='unformatted')
 			close(11,status='delete')
@@ -583,245 +651,617 @@ subroutine save_spectrum()
 				!
 				!  Initialize FORTRAN predefined datatypes
 				!
+                
 				call h5open_f(error) 
 				call h5fcreate_f(fname,H5F_ACC_TRUNC_F,file_id,error)
-				
+			
 				dsetname(1)="spece"
-				datarank=2
-				
-				data_dims(1)=max(int(mx0/dxslice),1)
-				data_dims(2)=gambins
-				
-				call h5screate_simple_f(datarank, data_dims, dspace_id, error)
-				
+				datarank=2		
+				data_dims2(1)=nbins
+				data_dims2(2)=gambins
+				call h5screate_simple_f(datarank, data_dims2, dspace_id, error)
 				call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
 				,dspace_id,dset_id,error)
-				
-				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,spece, data_dims, error)
-				
+				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,spece, data_dims2, error)
 				call h5dclose_f(dset_id,error)
 				call h5sclose_f(dspace_id,error)
 				
 				dsetname(1)="specp"
-				datarank=2
-				
-				data_dims(1)=max(int(mx0/dxslice),1)
-				data_dims(2)=gambins
-				
-				call h5screate_simple_f(datarank, data_dims, dspace_id, error)
-				
+				datarank=2				
+				data_dims2(1)=nbins
+				data_dims2(2)=gambins
+				call h5screate_simple_f(datarank, data_dims2, dspace_id, error)
 				call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
 				,dspace_id,dset_id,error)
-				
-				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,specp, data_dims, error)
-				
+				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,specp, data_dims2, error)
 				call h5dclose_f(dset_id,error)
 				call h5sclose_f(dspace_id,error)
 				
+				!flow rest **********************
+				dsetname(1)="specerest"
+				datarank=2				
+				data_dims2(1)=nbins
+				data_dims2(2)=gambins		
+				call h5screate_simple_f(datarank, data_dims2, dspace_id, error)				
+				call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
+				,dspace_id,dset_id,error)				
+				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,speceprime, data_dims2, error)				
+				call h5dclose_f(dset_id,error)
+				call h5sclose_f(dspace_id,error)
+
+				dsetname(1)="specprest"
+				datarank=2				
+				data_dims2(1)=nbins
+				data_dims2(2)=gambins					
+				call h5screate_simple_f(datarank, data_dims2, dspace_id, error)				
+				call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
+				,dspace_id,dset_id,error)				
+				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,specpprime, data_dims2, error)				
+				call h5dclose_f(dset_id,error)
+				call h5sclose_f(dspace_id,error)	
+				
 				
 				dsetname(2)="gamma"
-				datarank=1
-				
+				datarank=1			
 				data_dims1(1)=gambins
 				call h5screate_simple_f(datarank, data_dims1, dspace_id, error)
-				
 				call h5dcreate_f(file_id, dsetname(2), H5T_NATIVE_REAL &
 				,dspace_id,dset_id,error)
-				
 				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,xgamma,data_dims1,error)
-				
 				call h5dclose_f(dset_id,error)
-				call h5sclose_f(dspace_id,error)      
-				
-				
-				
+				call h5sclose_f(dspace_id,error)
+							
+										
 				dsetname(2)="xsl"
 				datarank=1
-				
-				data_dims1(1)=max(int(mx0/dxslice),1)
+				data_dims1(1)=nbins
 				call h5screate_simple_f(datarank, data_dims1, dspace_id, error)
-				
 				call h5dcreate_f(file_id, dsetname(2), H5T_NATIVE_REAL &
 				,dspace_id,dset_id,error)
-				
 				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,xslice,data_dims1,error)
-				
 				call h5dclose_f(dset_id,error)
-				call h5sclose_f(dspace_id,error)      
-				
-				
-				
-				dsetname(2)="dens"
-				datarank=1
-				
-				data_dims1(1)=max(int(mx0/dxslice),1)
-				call h5screate_simple_f(datarank, data_dims1, dspace_id, error)
-				
-				call h5dcreate_f(file_id, dsetname(2), H5T_NATIVE_REAL &
-				,dspace_id,dset_id,error)
-				
-				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,dens1,data_dims1,error)
-				
-				call h5dclose_f(dset_id,error)
-				call h5sclose_f(dspace_id,error)      
-				
-				
-				
-				dsetname(2)="dens0"
-				datarank=1
-				
-				data_dims1(1)=max(int(mx0/10),1)
-				call h5screate_simple_f(datarank, data_dims1, dspace_id, error)
-				
-				call h5dcreate_f(file_id, dsetname(2), H5T_NATIVE_REAL &
-				,dspace_id,dset_id,error)
-				
-				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,dens,data_dims1,error)
-				
-				call h5dclose_f(dset_id,error)
-				call h5sclose_f(dspace_id,error)      
-				
-				
-				
-				dsetname(2)="xshock"
-				datarank=1
-				
-				data_dims1(1)=1
-				call h5screate_simple_f(datarank, data_dims1, dspace_id, error)
-				
-				call h5dcreate_f(file_id, dsetname(2), H5T_NATIVE_REAL &
-				,dspace_id,dset_id,error)
-				
-				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,ishock*1.,data_dims1 &
-				,error)
-				
-				call h5dclose_f(dset_id,error)
-				call h5sclose_f(dspace_id,error)      
-				
+				call h5sclose_f(dspace_id,error) 
 				
 				dsetname(2)="gmin"
 				datarank=1
-				
 				data_dims1(1)=1
 				call h5screate_simple_f(datarank, data_dims1, dspace_id, error)
-				
 				call h5dcreate_f(file_id, dsetname(2), H5T_NATIVE_REAL &
 				,dspace_id,dset_id,error)
-				
 				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,gammin,data_dims1 &
 				,error)
 				
 				call h5dclose_f(dset_id,error)
-				call h5sclose_f(dspace_id,error)      
-				
+				call h5sclose_f(dspace_id,error) 	 
 				
 				dsetname(2)="gmax"
 				datarank=1
-				
 				data_dims1(1)=1
 				call h5screate_simple_f(datarank, data_dims1, dspace_id, error)
-				
 				call h5dcreate_f(file_id, dsetname(2), H5T_NATIVE_REAL &
 				,dspace_id,dset_id,error)
-				
 				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,gammax,data_dims1 &
 				,error)
-				
 				call h5dclose_f(dset_id,error)
 				call h5sclose_f(dspace_id,error)      
-				
-				
-				dsetname(2)="dgam"
-				datarank=1
-				
-				data_dims1(1)=1
-				call h5screate_simple_f(datarank, data_dims1, dspace_id, error)
-				
-				call h5dcreate_f(file_id, dsetname(2), H5T_NATIVE_REAL &
-				,dspace_id,dset_id,error)
-				
-				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,dgam,data_dims1 &
-				,error)
-				
-				call h5dclose_f(dset_id,error)
-				call h5sclose_f(dspace_id,error)      
-				
+														
 				
 				call h5fclose_f(file_id, error)
-				
 				call h5close_f(error)
+
+
+				
 #endif
 		endif !if rank eq 0
 		
 		call MPI_BARRIER(MPI_COMM_WORLD,ierr)
-		if(debug) print *, rank, "in spec deallocating"
-		if(debug) print *, rank,"al spece?", allocated(spece)
-		call MPI_BARRIER(MPI_COMM_WORLD,ierr)
-		if(debug) print *, rank,"al specp?", allocated(specp)
-		call MPI_BARRIER(MPI_COMM_WORLD,ierr)
-		if(debug) print *, rank,"al dens?", allocated(dens)
 		
-		if(allocated(spece)) deallocate(spece)
-		if(debug) print *, rank, "deallocated spece"
-		
-		!      if(allocated(spece) .and. allocated(dens)) deallocate(spece,
-		!     &          dens)
-		call MPI_BARRIER(MPI_COMM_WORLD,ierr)
-		if(debug) print *, rank, "in spec deallocating 1"
-		
-		if(allocated(xgamma) .and. allocated(xslice)) deallocate(xgamma &
-		,xslice)
-		call MPI_BARRIER(MPI_COMM_WORLD,ierr)
-		if(debug) print *, rank, "removed xgamma, xslice"
-		
+		if(allocated(xgamma)) deallocate(xgamma)
+		if(allocated(xslice)) deallocate(xslice)
 		if(allocated(specp)) deallocate(specp)
-		call MPI_BARRIER(MPI_COMM_WORLD,ierr)
-		if(debug) print *, rank, "removed specp"
+		if(allocated(spece)) deallocate(spece)
 		
-		if(allocated(specin))deallocate(specin)
-		call MPI_BARRIER(MPI_COMM_WORLD,ierr)
-		if(debug) print *, rank, "removed spece"
+		if(allocated(specpin)) deallocate(specpin)
+		if(allocated(specein)) deallocate(specein)
 		
-		if(allocated(dens1)) deallocate(dens1, dens2)
-		call MPI_BARRIER(MPI_COMM_WORLD,ierr)
-		if(debug) print *, rank, "removed dens1"
-		
-		if(allocated(densin)) deallocate(densin)
-		call MPI_BARRIER(MPI_COMM_WORLD,ierr)
-		if(debug) print *, rank, "removed densin"
-		
-		if(debug) print *, rank, "about to deallocate dens"
-		if(allocated(dens)) deallocate(dens)
-		if(debug) print *, rank, "deallocated dens"
-		
-		if(debug) print *, rank, "done spec"
+		if(allocated(speceprime)) deallocate(speceprime)		
+		if(allocated(specpprime)) deallocate(specpprime)
+        
+		if(allocated(umean)) deallocate(umean)
+		if(allocated(vmean)) deallocate(vmean)
+		if(allocated(numdens)) deallocate(numdens)
 	
+		if(debug) print *, rank, "done spec"
+		
+					
 	endif ! if lap is right for output
 	
 	
 	call MPI_BARRIER(MPI_COMM_WORLD,ierr)
 	
-	!      debug=.false.
-	
 end subroutine save_spectrum
 
+!-------------------------------------------------------------------------------
+! 						subroutine save_spectrum_2d					 
+!																		
+! Saves energy spectrum of particles, in x slices
+!  							
+!-------------------------------------------------------------------------------
+
+subroutine save_spectrum_2d()
+
+	implicit none
+	
+	! local variables
+	
+	integer :: gambins, xbin, ybin, nxbins, nybins, gbin,  ierr
+	real gammin, gammax, gammax1, gammin1, dgam
+	real dxslice, dyslice, gam
+	integer :: n, i, k, ind, procn
+	integer :: iL, iR, jL, jR, mxmin, mxmax, mymin, mymax
+	real vr, gvr, vx, vy, vz, uprime, vprime, wprime, gamprime
+	character fname*20
+	character(len=10) dsetname(20)
+
+#ifdef HDF5
+		integer(HID_T) :: file_id       ! File identifier 
+		integer(HID_T) :: dset_id       ! Dataset identifier 
+		integer(HID_T) :: dspace_id
+		integer(HSIZE_T) data_dims(2), data_dims1(1)
+        integer(HSIZE_T) data_dims3(3)
+#endif
+
+	integer ::datarank, error
+	
+	real, allocatable:: spece(:,:,:), specp(:,:,:)
+   	real, allocatable::	specein(:,:,:), specpin(:,:,:)	
+	real, allocatable :: xgamma(:), xslice(:), yslice(:)
+	
+	integer :: status(MPI_STATUS_SIZE)
+	
+    !spectrum in the flow rest frame
+	real, allocatable :: speceprime(:,:,:), specpprime(:,:,:)!, &
+!						 specelprime(:,:,:), specplprime(:,:,:)
+	real, allocatable :: umean(:,:), vmean(:,:), wmean(:,:), numdens(:,:)	! mean flow speed, mean number density
+
+	if(lap .ge.pltstart .and. modulo((lap-pltstart),interval) .eq.0)then
+		
+		gammin=1
+		gammax=1
+		gambins=100*2	! number of energy bins
+
+		mxmin=int((mx0-5)*.5)-1200+3
+		mxmax=int((mx0-5)*.5)+400+3
+		mymin=3
+		mymax=my0-2
+		!mymin=20
+		!mymax=int((my0-5)*.8)+3
+		
+		nxbins=max((mxmax-mxmin)/30,1)
+		nybins=max((mymax-mymin)/30,1)
+	
+		allocate(spece(nxbins,nybins,gambins),specp(nxbins,nybins,gambins))
+		allocate(xgamma(gambins),xslice(nxbins),yslice(nybins))
+		allocate(specpin(nxbins,nybins,gambins),specein(nxbins,nybins,gambins))
+
+		!flow rest frame *********		
+		allocate(speceprime(nxbins,nybins,gambins),specpprime(nxbins,nybins,gambins))
+!		allocate(specelprime(nxbins,nybins,gambins),specplprime(nxbins,nybins,gambins))
+		allocate(umean(nxbins,nybins),vmean(nxbins,nybins),wmean(nxbins,nybins))
+		allocate(numdens(nxbins,nybins))
+		!********************		
+
+		!bin size in each cpu. note that bin sizes are different in different cpus
+		dxslice=1.*(mxmax-mxmin)/nxbins
+		do i=1, nxbins
+			xslice(i)=dxslice*(i-1)+.5*dxslice+mxmin
+		enddo
+		
+		dyslice=1.*(mymax-mymin)/nybins
+		do i=1, nybins
+			yslice(i)=dyslice*(i-1)+.5*dyslice+mymin
+		enddo
+			 
+		! local gamma min and max 
+		do i=1,ions
+			gam=sqrt(1+(p(i)%u**2+p(i)%v**2+p(i)%w**2)) 
+			if(gam .gt. gammax) gammax=gam
+			if(gam .lt. gammin) gammin=gam
+			
+		enddo
+		do i=maxhlf+1,maxhlf+lecs
+			gam=sqrt(1+(p(i)%u**2+p(i)%v**2+p(i)%w**2)) 
+			if(gam .gt. gammax) gammax=gam
+			if(gam .lt. gammin) gammin=gam
+			
+		enddo
+		
+		! global gamma min and max
+		call mpi_allreduce(gammax,gammax1,1,mpi_read,mpi_max &
+		,mpi_comm_world,ierr)
+		gammax=gammax1 
+		call mpi_allreduce(gammin,gammin1,1,mpi_read,mpi_min &
+		,mpi_comm_world,ierr)
+		gammin=gammin1
+		
+		gammin=max(gammin, 1.+1e-6)		
+		dgam=(log10(gammax-1)-log10(gammin-1))/gambins		
+			
+		do i=1, gambins
+			xgamma(i)=10.**((i-1.)*dgam+log10(gammin-1))
+		enddo
+
+		
+		umean=0.
+		vmean=0.
+		wmean=0.
+		numdens=0.
+		specp=0.	
+		specpprime=0.
+!		specplprime=0.
+			
+       !(ion) flow mean velocity ***********
+        do i=1,ions
+        if(p(i)%ind .gt. 0) then
+		  xbin=int((p(i)%x+mxcum-mxmin)/dxslice+1)
+		  ybin=int((p(i)%y+mycum-mymin)/dyslice+1)
+		  if(xbin .ge. 1 .and. xbin .le. nxbins .and. &
+			 ybin .ge. 1 .and. ybin .le. nybins) then
+		    numdens(xbin,ybin)=numdens(xbin,ybin)+p(i)%ch
+		    gam=sqrt(1+(p(i)%u**2+p(i)%v**2+p(i)%w**2)) 
+		    umean(xbin,ybin)=umean(xbin,ybin)+(p(i)%u/gam)*p(i)%ch
+		    vmean(xbin,ybin)=vmean(xbin,ybin)+(p(i)%v/gam)*p(i)%ch
+			wmean(xbin,ybin)=wmean(xbin,ybin)+(p(i)%w/gam)*p(i)%ch		
+		  endif
+		endif
+		enddo
+		
+		umean=umean/numdens
+		vmean=vmean/numdens
+		wmean=wmean/numdens
+
+						
+		!compute the spectrum
+		if(debug) print *, "in spec, b4 ions"
+		do i=1,ions
+		  if(p(i)%ind .gt. 0) then
+			xbin=int((p(i)%x+mxcum-mxmin)/dxslice+1)
+			ybin=int((p(i)%y+mycum-mymin)/dyslice+1)
+			
+			if(xbin .ge. 1 .and. xbin .le. nxbins .and. &
+			   ybin .ge. 1 .and. ybin .le. nybins) then
+				gam=sqrt(1+(p(i)%u**2+p(i)%v**2+p(i)%w**2)) 								
+				gbin=int((alog10(gam-1)-alog10(gammin-1))/dgam+1)
+!				if(gbin .ge. 1 .and. gbin .le. gambins ) then 				
+!					specp(xbin,ybin,gbin)=specp(xbin,ybin,gbin)+p(i)%ch                                         
+!				endif
+				!energy sepectrum in the flow rest frame
+				!Lorentz transformation in the flow rest frame
+				vx=umean(xbin,ybin)
+				vy=vmean(xbin,ybin)
+				vz=wmean(xbin,ybin)
+				vr=sqrt(vx**2+vy**2+vz**2)
+				gvr=1./sqrt(1.-vr**2)			
+				uprime= -vx*gvr*gam+ &
+					    (1+(gvr-1)*vx**2/vr**2)*p(i)%u+ &
+						(gvr-1)*vx*vy/vr**2*p(i)%v+ &
+						(gvr-1)*vx*vz/vr**2*p(i)%w
+				vprime= -vy*gvr*gam+ &
+						(gvr-1)*vx*vy/vr**2*p(i)%u+ &
+						(1+(gvr-1)*vy**2/vr**2)*p(i)%v+ &
+						(gvr-1)*vy*vz/vr**2*p(i)%w
+				wprime= -vz*gvr*gam+ &
+						(gvr-1)*vx*vz/vr**2*p(i)%u+ &
+						(gvr-1)*vy*vz/vr**2*p(i)%v+ &
+						(1+(gvr-1)*vz**2/vr**2)*p(i)%w
+			    gamprime=sqrt(1+(uprime**2+vprime**2+wprime**2))
+			    gbin=int((alog10(gamprime-1)-alog10(gammin-1))/dgam+1)	   
+			    if(gbin .ge. 1 .and. gbin .le. gambins ) then 				
+					specpprime(xbin,ybin,gbin)=specpprime(xbin,ybin,gbin)+p(i)%ch                                       
+				endif
+!				if(gbin .ge. 1 .and. gbin .le. gambins .and. p(i)%ind .lt. 0) then 				
+!					specplprime(xbin,ybin,gbin)=specplprime(xbin,ybin,gbin)+p(i)%ch                                       
+!				endif
+			endif
+		  endif
+		enddo
+						
+!        call mpi_allreduce(specp,specpin,nxbins*nybins*gambins,mpi_read,mpi_sum &
+!		,mpi_comm_world,ierr)
+!       specp=specpin
+         
+        call mpi_allreduce(specpprime,specpin,nxbins*nybins*gambins,mpi_read,mpi_sum &
+		,mpi_comm_world,ierr)
+        specpprime=specpin    
+        
+!        call mpi_allreduce(specplprime,specpin,nxbins*nybins*gambins,mpi_read,mpi_sum &
+!		,mpi_comm_world,ierr)
+!        specplprime=specpin  
+        
+		umean=0.
+		vmean=0.
+		wmean=0.
+		numdens=0.
+		spece=0.
+		speceprime=0.
+!		specelprime=0.
+		
+       !(electron) flow mean velocity ***********
+        do i=maxhlf,maxhlf+lecs
+        if(p(i)%ind .gt. 0) then
+		  xbin=int((p(i)%x+mxcum-mxmin)/dxslice+1)
+		  ybin=int((p(i)%y+mycum-mymin)/dyslice+1)
+		  if(xbin .ge. 1 .and. xbin .le. nxbins .and. &
+			 ybin .ge. 1 .and. ybin .le. nybins) then
+		    numdens(xbin,ybin)=numdens(xbin,ybin)+p(i)%ch
+		    gam=sqrt(1+(p(i)%u**2+p(i)%v**2+p(i)%w**2)) 
+		    umean(xbin,ybin)=umean(xbin,ybin)+(p(i)%u/gam)*p(i)%ch
+		    vmean(xbin,ybin)=vmean(xbin,ybin)+(p(i)%v/gam)*p(i)%ch
+			wmean(xbin,ybin)=wmean(xbin,ybin)+(p(i)%w/gam)*p(i)%ch		
+		  endif
+		endif
+		enddo
+		
+		umean=umean/numdens
+		vmean=vmean/numdens
+		wmean=wmean/numdens        
+        
+        
+		if(debug) print *, "in spec, b4 lecs"
+		do i=maxhlf,maxhlf+lecs
+		 if(p(i)%ind .gt. 0) then
+			xbin=int((p(i)%x+mxcum-mxmin)/dxslice+1)
+			ybin=int((p(i)%y+mycum-mymin)/dyslice+1)
+				
+			if(xbin .ge. 1 .and. xbin .le. nxbins .and. &
+			   ybin .ge. 1 .and. ybin .le. nybins) then
+				gam=sqrt(1+(p(i)%u**2+p(i)%v**2+p(i)%w**2)) 								
+				gbin=int((alog10(gam-1)-alog10(gammin-1))/dgam+1)
+!				if(gbin .ge. 1 .and. gbin .le. gambins ) then 				
+!					spece(xbin,ybin,gbin)=spece(xbin,ybin,gbin)+p(i)%ch                                         
+!				endif
+				!energy sepectrum in the flow rest frame
+				!Lorentz transformation in the flow rest frame
+				vx=umean(xbin,ybin)
+				vy=vmean(xbin,ybin)
+				vz=wmean(xbin,ybin)
+				vr=sqrt(vx**2+vy**2+vz**2)
+				gvr=1./sqrt(1.-vr**2)
+				uprime= -vx*gvr*gam+ &
+					    (1+(gvr-1)*vx**2/vr**2)*p(i)%u+ &
+						(gvr-1)*vx*vy/vr**2*p(i)%v+ &
+						(gvr-1)*vx*vz/vr**2*p(i)%w
+				vprime= -vy*gvr*gam+ &
+						(gvr-1)*vx*vy/vr**2*p(i)%u+ &
+						(1+(gvr-1)*vy**2/vr**2)*p(i)%v+ &
+						(gvr-1)*vy*vz/vr**2*p(i)%w
+				wprime= -vz*gvr*gam+ &
+						(gvr-1)*vx*vz/vr**2*p(i)%u+ &
+						(gvr-1)*vy*vz/vr**2*p(i)%v + &
+						(1+(gvr-1)*vz**2/vr**2)*p(i)%w
+			    gamprime=sqrt(1+(uprime**2+vprime**2+wprime**2))
+			    gbin=int((alog10(gamprime-1)-alog10(gammin-1))/dgam+1)	   
+			    if(gbin .ge. 1 .and. gbin .le. gambins ) then 				
+					speceprime(xbin,ybin,gbin)=speceprime(xbin,ybin,gbin)+p(i)%ch                                       
+				endif
+!				if(gbin .ge. 1 .and. gbin .le. gambins .and. p(i)%ind .lt. 0) then 				
+!					specelprime(xbin,ybin,gbin)=specelprime(xbin,ybin,gbin)+p(i)%ch                                       
+!				endif				
+			endif
+		  endif
+		enddo
+		
+		
+!        call mpi_allreduce(spece,specein,nxbins*nybins*gambins,mpi_read,mpi_sum &
+!		,mpi_comm_world,ierr)
+ !       spece=specein
+        
+        call mpi_allreduce(speceprime,specein,nxbins*nybins*gambins,mpi_read,mpi_sum &
+		,mpi_comm_world,ierr)
+        speceprime=specein        
+
+!        call mpi_allreduce(specelprime,specein,nxbins*nybins*gambins,mpi_read,mpi_sum &
+!		,mpi_comm_world,ierr)
+!       specelprime=specein
+        
+  	
+		if(debug) print*, rank, "done spec calculation, start writing"
+		
+		if(rank .eq. 0) then     
+			
+			ind=(lap-pltstart)/interval
+			
+			write(indchar,"(i3.3)")ind
+			
+			fname="output/spect."//trim(indchar)
+            print *,"",fname
+			
+			open(unit=11,file=fname,form='unformatted')
+			close(11,status='delete')
+			
+			if(debug) print *,rank, ": in spec,starting save"
+		
+#ifdef HDF5
+				!
+				!  Initialize FORTRAN predefined datatypes
+				!
+                
+				call h5open_f(error) 
+				call h5fcreate_f(fname,H5F_ACC_TRUNC_F,file_id,error)
+			
+!				dsetname(1)="spece"
+!				datarank=3		
+!				data_dims3(1)=nxbins
+!				data_dims3(2)=nybins
+!				data_dims3(3)=gambins
+!				call h5screate_simple_f(datarank, data_dims3, dspace_id, error)
+!				call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
+!				,dspace_id,dset_id,error)
+!				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,spece, data_dims3, error)
+!				call h5dclose_f(dset_id,error)
+!				call h5sclose_f(dspace_id,error)
+				
+!				dsetname(1)="specp"
+!				datarank=3				
+!				data_dims3(1)=nxbins
+!				data_dims3(2)=nybins
+!				data_dims3(3)=gambins
+!				call h5screate_simple_f(datarank, data_dims3, dspace_id, error)
+!				call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
+!				,dspace_id,dset_id,error)
+!				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,specp, data_dims3, error)
+!				call h5dclose_f(dset_id,error)
+!				call h5sclose_f(dspace_id,error)
+				
+				!flow rest **********************
+				dsetname(1)="specerest"
+				datarank=3				
+				data_dims3(1)=nxbins
+				data_dims3(2)=nybins
+				data_dims3(3)=gambins		
+				call h5screate_simple_f(datarank, data_dims3, dspace_id, error)				
+				call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
+				,dspace_id,dset_id,error)				
+				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,speceprime, data_dims3, error)				
+				call h5dclose_f(dset_id,error)
+				call h5sclose_f(dspace_id,error)
+
+				dsetname(1)="specprest"
+				datarank=3				
+				data_dims3(1)=nxbins
+				data_dims3(2)=nybins
+				data_dims3(3)=gambins					
+				call h5screate_simple_f(datarank, data_dims3, dspace_id, error)				
+				call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
+				,dspace_id,dset_id,error)				
+				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,specpprime, data_dims3, error)				
+				call h5dclose_f(dset_id,error)
+				call h5sclose_f(dspace_id,error)	
+				
+!				dsetname(1)="specelrest"
+!				datarank=3				
+!				data_dims3(1)=nxbins
+!				data_dims3(2)=nybins
+!				data_dims3(3)=gambins		
+!				call h5screate_simple_f(datarank, data_dims3, dspace_id, error)				
+!				call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
+!				,dspace_id,dset_id,error)				
+!				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,specelprime, data_dims3, error)				
+!				call h5dclose_f(dset_id,error)
+!				call h5sclose_f(dspace_id,error)
+
+!				dsetname(1)="specplrest"
+!				datarank=3				
+!				data_dims3(1)=nxbins
+!				data_dims3(2)=nybins
+!				data_dims3(3)=gambins					
+!				call h5screate_simple_f(datarank, data_dims3, dspace_id, error)				
+!				call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
+!				,dspace_id,dset_id,error)				
+!				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,specplprime, data_dims3, error)				
+!				call h5dclose_f(dset_id,error)
+!				call h5sclose_f(dspace_id,error)
+									
+				dsetname(2)="gamma"
+				datarank=1			
+				data_dims1(1)=gambins
+				call h5screate_simple_f(datarank, data_dims1, dspace_id, error)
+				call h5dcreate_f(file_id, dsetname(2), H5T_NATIVE_REAL &
+				,dspace_id,dset_id,error)
+				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,xgamma,data_dims1,error)
+				call h5dclose_f(dset_id,error)
+				call h5sclose_f(dspace_id,error)
+							
+										
+				dsetname(2)="xsl"
+				datarank=1
+				data_dims1(1)=nxbins
+				call h5screate_simple_f(datarank, data_dims1, dspace_id, error)
+				call h5dcreate_f(file_id, dsetname(2), H5T_NATIVE_REAL &
+				,dspace_id,dset_id,error)
+				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,xslice,data_dims1,error)
+				call h5dclose_f(dset_id,error)
+				call h5sclose_f(dspace_id,error) 
+				
+				dsetname(2)="ysl"
+				datarank=1
+				data_dims1(1)=nybins
+				call h5screate_simple_f(datarank, data_dims1, dspace_id, error)
+				call h5dcreate_f(file_id, dsetname(2), H5T_NATIVE_REAL &
+				,dspace_id,dset_id,error)
+				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,yslice,data_dims1,error)
+				call h5dclose_f(dset_id,error)
+				call h5sclose_f(dspace_id,error) 
+							 
+				
+				dsetname(2)="gmax"
+				datarank=1
+				data_dims1(1)=1
+				call h5screate_simple_f(datarank, data_dims1, dspace_id, error)
+				call h5dcreate_f(file_id, dsetname(2), H5T_NATIVE_REAL &
+				,dspace_id,dset_id,error)
+				call h5dwrite_f(dset_id, H5T_NATIVE_REAL,gammax,data_dims1 &
+				,error)
+				call h5dclose_f(dset_id,error)
+				call h5sclose_f(dspace_id,error)      
+														
+				
+				call h5fclose_f(file_id, error)
+				call h5close_f(error)
+
+
+				
+#endif
+		endif !if rank eq 0
+		
+		call MPI_BARRIER(MPI_COMM_WORLD,ierr)
+		
+		if(allocated(xgamma)) deallocate(xgamma)
+		if(allocated(xslice)) deallocate(xslice)
+		if(allocated(yslice)) deallocate(yslice)
+		if(allocated(specp)) deallocate(specp)
+		if(allocated(spece)) deallocate(spece)
+		
+		if(allocated(specpin)) deallocate(specpin)
+		if(allocated(specein)) deallocate(specein)
+		
+		if(allocated(speceprime)) deallocate(speceprime)		
+		if(allocated(specpprime)) deallocate(specpprime)
+!		if(allocated(specelprime)) deallocate(specelprime)		
+!		if(allocated(specplprime)) deallocate(specplprime)
+        
+		if(allocated(umean)) deallocate(umean)
+		if(allocated(vmean)) deallocate(vmean)
+		if(allocated(numdens)) deallocate(numdens)
+	
+		if(debug) print *, rank, "done spec"
+		
+					
+	endif ! if lap is right for output
+	
+	
+	call MPI_BARRIER(MPI_COMM_WORLD,ierr)
+	
+end subroutine save_spectrum_2d
 
 
 !-------------------------------------------------------------------------------
 ! 						subroutine save_momentumspec					 
 !																		
-!
+! Saves momentum spectrum of particles, in x slices
 !  							
 !-------------------------------------------------------------------------------
 
 subroutine save_momentumspec()
-  use hdf5 
-  real ishockall, ishock, c, dxslice
+
+  implicit none
+
+  real ishockall, ishock, dxslice
   real maxdens, mindens, middens
   integer mombins, xbin, mbin, mbinneg, ierr
   real mommin, mommax, mommin1, mommax1, dmom, mom
   logical logscale
-  integer n, i, ind, var
+  integer n, i, ind, var, procn
   character fname*80
   character(len=20) dsetname(20)
   
@@ -830,29 +1270,35 @@ subroutine save_momentumspec()
   INTEGER(HID_T) :: dset_id ! Dataset identifier 
   integer(HID_T) :: dspace_id
   INTEGER(HSIZE_T) data_dims(2), data_dims1(1)
+  integer(HSIZE_T) data_dims3(3)
 #endif
   integer datarank, error
   
   real, allocatable :: spece(:,:), specp(:,:), specin(:,:)
+  real, allocatable :: speceb(:,:), specpb(:,:)
   real, allocatable :: logmom(:), xslice(:)
   real, allocatable :: dens1(:), densin(:),  dens(:), dens2(:)
+
+  ! spectra sliced in x, y, z (each processor saves one) 
+  real, allocatable:: tspece(:,:,:), tspecp(:,:,:)
+  real, allocatable:: tspeceb(:,:,:), tspecpb(:,:,:)
+  integer :: status(MPI_STATUS_SIZE)
   
   logscale=.true.
   mombins=100*2
   dxslice=100
   
-  IF(lap.ge.pltstart.and.modulo((lap-pltstart),interval).eq.0 &
-       .or.lap.eq.-190001) THEN
+  IF(lap.ge.pltstart.and.modulo((lap-pltstart),interval).eq.0) THEN
      
      do var=1,3             !loop over dimensions
         
         select case (var)
         case (1)
-           if(rank .eq. 0) PRINT *, "Doing x momenta"
+           if(rank .eq. 0.and.debug) PRINT *, "Doing x momenta"
         case (2)
-           if(rank .eq. 0) PRINT *, "Doing y momenta"
+           if(rank .eq. 0.and.debug) PRINT *, "Doing y momenta"
         case (3)
-           if(rank .eq. 0) PRINT *, "Doing z momenta"
+           if(rank .eq. 0.and.debug) PRINT *, "Doing z momenta"
         end select
         
         !     Find momenta with maximum and minimum magnitudes            
@@ -898,11 +1344,11 @@ subroutine save_momentumspec()
         
         !     checks
         IF(mommin.eq.0.and.mommax.eq.0) THEN
-           if(rank .eq. 0) PRINT *, "No interesting momenta"
+           if(rank .eq. 0.and.debug) PRINT *, "No interesting momenta"
         ENDIF
-        mommin=max(mommin,10.**-5.)
+        mommin=max(mommin,10.d-5)
         IF(mommax.eq.0.)THEN
-           mommax=10.**-4.
+           mommax=10.d-4
         ENDIF
         
         !     Compute logarithmic binsize.      
@@ -911,12 +1357,11 @@ subroutine save_momentumspec()
            dmom=10.**(-5.)
         ENDIF
         
-        if(rank.eq.0) print *, "mommin=", mommin, "mommax=", mommax
-        if(rank.eq.0) print *, "dmom=", dmom
-        
         !     Allocate appropriate storage for logarithmic histogram.
         allocate(spece(max(int(mx0/dxslice),1),mombins))
         allocate(specp(max(int(mx0/dxslice),1),mombins))
+        allocate(speceb(max(int(mx0/dxslice),1),mombins))
+        allocate(specpb(max(int(mx0/dxslice),1),mombins))
         allocate(specin(max(int(mx0/dxslice),1),mombins))
         allocate(logmom(mombins))
         allocate(xslice(max(int(mx0/dxslice),1)))
@@ -924,7 +1369,14 @@ subroutine save_momentumspec()
         allocate(dens2(max(int(mx0/10),1)))
         allocate(dens1(max(int(mx0/dxslice),1)))
         allocate(densin(max(int(mx0/dxslice),1)))
-        
+
+        if (xyzspec) then
+           allocate(tspece(max(int(mx0/dxslice),1),mombins,size0))
+           allocate(tspecp(max(int(mx0/dxslice),1),mombins,size0))
+           allocate(tspeceb(max(int(mx0/dxslice),1),mombins,size0))
+           allocate(tspecpb(max(int(mx0/dxslice),1),mombins,size0))
+        endif
+
         !     Compute values of logarithmic bins
         do i=1,mombins/2
            !               logmom(i+mombins/2)=10.**((i-1)*dmom)*mommin
@@ -936,39 +1388,45 @@ subroutine save_momentumspec()
         !     Set default spectra to 0. 
         spece(:,:)=0.
         specp(:,:)=0.
+        speceb(:,:)=0.
+        specpb(:,:)=0.
         specin(:,:)=0.
         dens1(:)=0.
         densin(:)=0.
         dens(:)=0.
         dens2(:)=0.
-        
+
+        if (xyzspec) then
+           tspece(:,:,:)=0.
+           tspecp(:,:,:)=0.
+           tspeceb(:,:,:)=0.
+           tspecpb(:,:,:)=0.
+        endif
+
         !     find where is the shock
         maxdens=0
         mindens=1e8
         do n=1,ions
            i=int(p(n)%x)               
-           dens(min(int(i/10.+1),mx0/10))= &
-                dens(min(int(i/10.+1),mx0/10))+ &
-                real(splitratio)**(1.-real(p(n)%splitlev))*p(n)%ch
+           dens(max(min(int(i/10.+1),mx0/10),1))= &
+                dens(max(min(int(i/10.+1),mx0/10),1))+p(n)%ch
         enddo
-        call mpi_allreduce(dens,dens2,mx0/10,mpi_read,mpi_sum &
+        call mpi_allreduce(dens,dens2,max(int(mx0/10),1),mpi_read,mpi_sum &
              ,mpi_comm_world,ierr)            
         dens=dens2/size0
         
         maxdens=maxval(dens)
-        do i=1,mx0/10
+        do i=1,max(int(mx0/10),1)
            if(dens(i) .gt. maxdens/10.) then
               if(dens(i).lt.mindens)mindens=dens(i)
            endif
         enddo
         middens=minval(abs(dens-(maxdens+mindens)/2.))            
-        do i=1,mx/10
+        do i=1,max(int(mx0/10),1)
            if(abs(dens(i)-(maxdens+mindens)/2.) .eq. middens) then
               ishock=i*10.-5
            endif
         enddo
-        
-        if(rank .eq. 0) print *, rank,": Shock location=", ishock
         
         !     define spatial bins
         do i=1,max(int(mx0/dxslice),1)
@@ -985,7 +1443,7 @@ subroutine save_momentumspec()
            
            !     Compute momentum bin
            mbin=mombins/2+1
-           if(xbin .ge. 1 .and. xbin .le. int(mx/dxslice)) then
+           if(xbin .ge. 1 .and. xbin .le. max(int(mx/dxslice),1)) then
               select case (var)
               case (1) 
                  mom=p(i)%u
@@ -1016,23 +1474,26 @@ subroutine save_momentumspec()
               endif
               
               if(mbin .ge. 1 .and. mbin .le. mombins ) then 
-                 dens1(xbin)=dens1(xbin)+ &
-                      real(splitratio)**(1.-real(p(i)%splitlev))*p(i)%ch
-                 specp(xbin,mbin)=specp(xbin,mbin)+ &
-                      real(splitratio)**(1.-real(p(i)%splitlev))*p(i)%ch
+                 dens1(xbin)=dens1(xbin)+ p(i)%ch
+                 specp(xbin,mbin)=specp(xbin,mbin)+ p(i)%ch
+
+                 if (p(i)%ind .lt. 0) then 
+                    specpb(xbin,mbin)=specpb(xbin,mbin)+ p(i)%ch
+                 endif
+
               endif
            endif !xbin
         enddo !over ions
         
         !     Compute the spectrum for electrons.
-        do i=maxhlf,maxhlf+lecs
+        do i=maxhlf+1,maxhlf+lecs
 
            !     Compute the x bin
            xbin=int(p(i)%x/dxslice+1)
            
            !     Compute momentum bin
            mbin=mombins/2+1
-           if(xbin .ge. 1 .and. xbin .le. int(mx/dxslice)) then
+           if(xbin .ge. 1 .and. xbin .le. max(int(mx/dxslice),1)) then
               select case (var)
               case (1) 
                  mom=p(i)%u
@@ -1064,10 +1525,12 @@ subroutine save_momentumspec()
               
               !     Compute the logarithmic spectra.
               if(mbin .ge. 1 .and. mbin .le. mombins ) then 
-                 dens1(xbin)=dens1(xbin)+ &
-                      real(splitratio)**(1.-real(p(i)%splitlev))*p(i)%ch
-                 spece(xbin,mbin)=spece(xbin,mbin)+ &
-                      real(splitratio)**(1.-real(p(i)%splitlev))*p(i)%ch
+                 dens1(xbin)=dens1(xbin)+ p(i)%ch
+                 spece(xbin,mbin)=spece(xbin,mbin)+ p(i)%ch
+
+                 if (p(i)%ind .lt. 0) then 
+                    speceb(xbin,mbin)=speceb(xbin,mbin)+ p(i)%ch
+                 endif
               endif
            endif  !xbin       
            
@@ -1077,6 +1540,84 @@ subroutine save_momentumspec()
         if(debug) print *, rank, "reducing spectra"
         
         !     now reduce all to rank 0, which will save everything
+        ! xyz spectra
+        if (xyzspec) then
+           !lecs	
+           do procn=0,size0-1                   
+              if (rank .eq. 0) then                      
+                 if (procn .ne. 0) then !receive from procn                                
+                    call MPI_Recv(specin,max(int(mx0/dxslice),1)*mombins &
+                         ,mpi_read,procn,1,MPI_COMM_WORLD,status,error)
+                    tspece(:,:,procn+1)=specin(:,:)
+                    specin(:,:)=0.
+                 else           !procn eq 0
+                    tspece(:,:,1)=spece(:,:)               
+                 endif
+              else !rank ne 0                      
+                 if (procn .eq. rank) then
+                    call MPI_Send(spece,max(int(mx0/dxslice),1)*mombins &
+                         ,mpi_read,0,1,MPI_COMM_WORLD,error)          
+                 endif
+              endif !rank ne 0                   
+           enddo!procn     
+           !ions
+           do procn=0,size0-1                   
+              if (rank .eq. 0) then                      
+                 if (procn .ne. 0) then !receive from procn                                
+                    call MPI_Recv(specin,max(int(mx0/dxslice),1)*mombins &
+                         ,mpi_read,procn,1,MPI_COMM_WORLD,status,error)
+                    tspecp(:,:,procn+1)=specin(:,:)
+                    specin(:,:)=0.
+                 else           !procn eq 0
+                    tspecp(:,:,1)=specp(:,:)               
+                 endif
+              else !rank ne 0                      
+                 if (procn .eq. rank) then
+                    call MPI_Send(specp,max(int(mx0/dxslice),1)*mombins &
+                         ,mpi_read,0,1,MPI_COMM_WORLD,error)          
+                 endif
+              endif !rank ne 0                   
+           enddo!procn 
+           !beam lecs
+           do procn=0,size0-1                   
+              if (rank .eq. 0) then                      
+                 if (procn .ne. 0) then !receive from procn                                
+                    call MPI_Recv(specin,max(int(mx0/dxslice),1)*mombins &
+                         ,mpi_read,procn,1,MPI_COMM_WORLD,status,error)
+                    tspeceb(:,:,procn+1)=specin(:,:)
+                    specin(:,:)=0.
+                 else           !procn eq 0
+                    tspeceb(:,:,1)=speceb(:,:)               
+                 endif
+              else !rank ne 0                      
+                 if (procn .eq. rank) then
+                    call MPI_Send(speceb,max(int(mx0/dxslice),1)*mombins &
+                         ,mpi_read,0,1,MPI_COMM_WORLD,error)          
+                 endif
+              endif !rank ne 0                   
+           enddo!procn
+           ! beam ions
+           do procn=0,size0-1                   
+              if (rank .eq. 0) then                      
+                 if (procn .ne. 0) then !receive from procn                                
+                    call MPI_Recv(specin,max(int(mx0/dxslice),1)*mombins &
+                         ,mpi_read,procn,1,MPI_COMM_WORLD,status,error)
+                    tspecpb(:,:,procn+1)=specin(:,:)
+                    specin(:,:)=0.
+                 else           !procn eq 0
+                    tspecpb(:,:,1)=specpb(:,:)               
+                 endif
+              else !rank ne 0                      
+                 if (procn .eq. rank) then
+                    call MPI_Send(specpb,max(int(mx0/dxslice),1)*mombins &
+                         ,mpi_read,0,1,MPI_COMM_WORLD,error)          
+                 endif
+              endif !rank ne 0                   
+           enddo!procn
+        endif
+        ! end xyz spectra
+        
+
         !     Sum the logarithmic spectra and make the final spectra global.
         call mpi_allreduce(spece,specin,max(int(mx0/dxslice),1) &
              *mombins,mpi_read,mpi_sum,mpi_comm_world,ierr)
@@ -1088,6 +1629,18 @@ subroutine save_momentumspec()
              *mombins,mpi_read,mpi_sum,mpi_comm_world,ierr)
         
         specp=specin
+        specin(:,:)=0.
+        
+        call mpi_allreduce(speceb,specin,max(int(mx0/dxslice),1) &
+             *mombins,mpi_read,mpi_sum,mpi_comm_world,ierr)
+        
+        speceb=specin
+        specin(:,:)=0.
+        
+        call mpi_allreduce(specpb,specin,max(int(mx0/dxslice),1) &
+             *mombins,mpi_read,mpi_sum,mpi_comm_world,ierr)
+        
+        specpb=specin
         
         call mpi_allreduce(dens1,densin,max(int(mx0/dxslice),1) &
              ,mpi_read,mpi_sum,mpi_comm_world,ierr)
@@ -1098,6 +1651,16 @@ subroutine save_momentumspec()
         do i=1,max(int(mx0/dxslice),1)
            spece(i,:)=spece(i,:)/abs(logmom)
            specp(i,:)=specp(i,:)/abs(logmom)
+           speceb(i,:)=speceb(i,:)/abs(logmom)
+           specpb(i,:)=specpb(i,:)/abs(logmom)
+           if (xyzspec) then
+              do procn=0,size0-1
+                 tspece(i,:,procn+1)=tspece(i,:,procn+1)/abs(logmom)
+                 tspecp(i,:,procn+1)=tspecp(i,:,procn+1)/abs(logmom)
+                 tspeceb(i,:,procn+1)=tspeceb(i,:,procn+1)/abs(logmom)
+                 tspecpb(i,:,procn+1)=tspecpb(i,:,procn+1)/abs(logmom)
+              enddo
+           endif
         enddo
         
         call MPI_BARRIER(MPI_COMM_WORLD,ierr)
@@ -1109,7 +1672,7 @@ subroutine save_momentumspec()
            write(indchar,"(i3.3)")ind               
            fname="output/momentum."//trim(indchar)               
            if(var.eq.1) then 
-              if(rank.eq.0)PRINT *, "filename=", fname
+              if(rank.eq.0)PRINT *, "", fname
               open(unit=11,file=fname,form='unformatted')
               close(11,status='delete')
            endif
@@ -1121,6 +1684,106 @@ subroutine save_momentumspec()
               CALL h5open_f(error) 
               CALL h5fcreate_f(fname,H5F_ACC_TRUNC_F,file_id,error)
            ENDIF
+           
+           !xyz spectra
+           if (xyzspec) then
+              select case (var)
+              case (1)
+                 dsetname(1)="tpxelogsp"
+              case (2)
+                 dsetname(1)="tpyelogsp"
+              case (3)
+                 dsetname(1)="tpzelogsp"
+              end select
+              
+              datarank=3				
+              data_dims3(1)=max(int(mx0/dxslice),1)
+              data_dims3(2)=mombins
+              data_dims3(3)=size0
+              
+              call h5screate_simple_f(datarank, data_dims3, dspace_id, error)
+              
+              call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
+                   ,dspace_id,dset_id,error)
+              
+              call h5dwrite_f(dset_id, H5T_NATIVE_REAL,tspece, data_dims3, error)
+              
+              call h5dclose_f(dset_id,error)
+              call h5sclose_f(dspace_id,error)
+              
+              select case (var)
+              case (1)
+                 dsetname(1)="tpxplogsp"
+              case (2)
+                 dsetname(1)="tpyplogsp"
+              case (3)
+                 dsetname(1)="tpzplogsp"
+              end select
+              
+              datarank=3				
+              data_dims3(1)=max(int(mx0/dxslice),1)
+              data_dims3(2)=mombins
+              data_dims3(3)=size0
+              
+              call h5screate_simple_f(datarank, data_dims3, dspace_id, error)
+              
+              call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
+                   ,dspace_id,dset_id,error)
+              
+              call h5dwrite_f(dset_id, H5T_NATIVE_REAL,tspecp, data_dims3, error)
+              
+              call h5dclose_f(dset_id,error)
+              call h5sclose_f(dspace_id,error)
+              
+              select case (var)
+              case (1)
+                 dsetname(1)="tpxeblogsp"
+              case (2)
+                 dsetname(1)="tpyeblogsp"
+              case (3)
+                 dsetname(1)="tpzeblogsp"
+              end select
+              
+              datarank=3				
+              data_dims3(1)=max(int(mx0/dxslice),1)
+              data_dims3(2)=mombins
+              data_dims3(3)=size0
+				
+              call h5screate_simple_f(datarank, data_dims3, dspace_id, error)
+              
+              call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
+                   ,dspace_id,dset_id,error)
+              
+              call h5dwrite_f(dset_id, H5T_NATIVE_REAL,tspeceb, data_dims3, error)
+              
+              call h5dclose_f(dset_id,error)
+              call h5sclose_f(dspace_id,error)
+              
+              select case (var)
+              case (1)
+                 dsetname(1)="tpxpblogsp"
+              case (2)
+                 dsetname(1)="tpypblogsp"
+              case (3)
+                 dsetname(1)="tpzpblogsp"
+              end select
+              
+              datarank=3				
+              data_dims3(1)=max(int(mx0/dxslice),1)
+              data_dims3(2)=mombins
+              data_dims3(3)=size0
+              
+              call h5screate_simple_f(datarank, data_dims3, dspace_id, error)
+              
+              call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
+                   ,dspace_id,dset_id,error)
+              
+              call h5dwrite_f(dset_id, H5T_NATIVE_REAL,tspecpb, data_dims3, error)
+              
+              call h5dclose_f(dset_id,error)
+              call h5sclose_f(dspace_id,error)
+           endif
+           ! end xyz spectrum
            
            !     Write logarithmic spectra.
            select case (var)
@@ -1163,7 +1826,49 @@ subroutine save_momentumspec()
            CALL h5dwrite_f(dset_id, H5T_NATIVE_REAL,specp,data_dims &
                 , error)               
            call h5dclose_f(dset_id,error)
-           call h5sclose_f(dspace_id,error)         
+           call h5sclose_f(dspace_id,error)      
+
+           select case (var)
+           case (1)
+              dsetname(1)="pxpblogsp"
+           case (2)
+              dsetname(1)="pypblogsp"
+           case (3)
+              dsetname(1)="pzpblogsp"
+           end select
+           
+           datarank=2               
+           data_dims(1)=max(int(mx0/dxslice),1)
+           data_dims(2)=mombins               
+           CALL h5screate_simple_f(datarank, data_dims, dspace_id, &
+                error)
+           call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
+                ,dspace_id,dset_id,error)               
+           CALL h5dwrite_f(dset_id, H5T_NATIVE_REAL,specpb,data_dims &
+                , error)               
+           call h5dclose_f(dset_id,error)
+           call h5sclose_f(dspace_id,error) 
+           
+           select case (var)
+           case (1)
+              dsetname(1)="pxeblogsp"
+           case (2)
+              dsetname(1)="pyeblogsp"
+           case (3)
+              dsetname(1)="pzeblogsp"
+           end select
+           
+           datarank=2               
+           data_dims(1)=max(int(mx0/dxslice),1)
+           data_dims(2)=mombins               
+           CALL h5screate_simple_f(datarank, data_dims, dspace_id, &
+                error)
+           call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
+                ,dspace_id,dset_id,error)               
+           CALL h5dwrite_f(dset_id, H5T_NATIVE_REAL,speceb,data_dims &
+                , error)               
+           call h5dclose_f(dset_id,error)
+           call h5sclose_f(dspace_id,error)
            
            select case (var)
            case (1)
@@ -1308,6 +2013,14 @@ subroutine save_momentumspec()
         if(allocated(specp)) deallocate(specp)
         call MPI_BARRIER(MPI_COMM_WORLD,ierr)
         if(debug) print *, rank, "removed specp"
+
+        if(allocated(speceb)) deallocate(speceb)
+        call MPI_BARRIER(MPI_COMM_WORLD,ierr)
+        if(debug) print *, rank, "deallocated speceb"
+        
+        if(allocated(specpb)) deallocate(specpb)
+        call MPI_BARRIER(MPI_COMM_WORLD,ierr)
+        if(debug) print *, rank, "removed specpb"
         
         if(allocated(specin))deallocate(specin)
         call MPI_BARRIER(MPI_COMM_WORLD,ierr)
@@ -1329,6 +2042,24 @@ subroutine save_momentumspec()
         if(allocated(densin)) deallocate(densin)
         call MPI_BARRIER(MPI_COMM_WORLD,ierr)
         if(debug) print *, rank, "removed densin"
+
+        if (xyzspec) then
+           if(allocated(tspece)) deallocate(tspece)
+           call MPI_BARRIER(MPI_COMM_WORLD,ierr)
+           if(debug) print *, rank, "removed tspece"
+        
+           if(allocated(tspecp)) deallocate(tspecp)
+           call MPI_BARRIER(MPI_COMM_WORLD,ierr)
+           if(debug) print *, rank, "removed tspecp"
+           
+           if(allocated(tspeceb)) deallocate(tspeceb)
+           call MPI_BARRIER(MPI_COMM_WORLD,ierr)
+           if(debug) print *, rank, "removed tspeceb"
+           
+           if(allocated(tspecpb)) deallocate(tspecpb)
+           call MPI_BARRIER(MPI_COMM_WORLD,ierr)
+           if(debug) print *, rank, "removed tspecpb"
+        endif
         
         if(debug) print *, rank, "done momentum spec"
         
@@ -1339,3631 +2070,2832 @@ subroutine save_momentumspec()
   
 end subroutine save_momentumspec
 
-			
+
 !-------------------------------------------------------------------------------
-! 						subroutine output_trq					 
+! 						subroutine write_restart					 
 !																		
-! Outputs the grid quantities to an hdf5 file (never called)
+! Saves restart files at user-specified times
 !  							
 !-------------------------------------------------------------------------------
+subroutine write_restart()
+  
+  implicit none
+  
+  ! local variables  
+  integer ::sendbuf,ierr,n
+  logical exst1
+  integer ::token,request,status(MPI_STATUS_SIZE),request1 &
+       ,status1(MPI_STATUS_SIZE)
+  
+  !save restart file
+  !naming convention: write to rest(flds/prtl).jobname.rank.d
+  !if the interval is met, rename the file into rest(flds/prtl).jobname.lapNNNNN.rank.d
+	
+  sendbuf=0
+  if(rank .eq. 0) then 
+     inquire(file="write_restart",exist=exst1)
+     if(exst1)sendbuf=1
+  endif
 
-subroutine output_trq()
+  call mpi_bcast(sendbuf,1,mpi_integer,0,mpi_comm_world,ierr)
+  exst1=.false.
 
-	implicit none
-
-	! local variables
-	
-	integer :: ind, is, kglob, kloc, kstart, kfinish,nz, fh,info, i, j, k, n
-	integer ::jstart, jfinish,ny,iv, my1, mz1, mx1
-	real bx0,by0,bz0,ex0,ey0 ,ez0,bxd,byd,bzd,exd,eyd,ezd, curx0, &
-	cury0, curz0
-	real*4,allocatable::temporary_vec(:)
-	integer ::error, error_n  ! Error flags
-	integer ::nvars, midvars,stride
-	integer ::all_counts(size0) ! array to know the sizes of other proc array
-	integer ::all_ions(size0), all_lecs(size0)
-	character(len=9) dsetname(20)
-	integer(HID_T) :: file_id ! File identifier 
-	integer(HID_T) :: dset_id(20) ! Dataset identifier 
-	integer(HID_T) :: filespace(20) ! Dataspace identifier in file 
-	integer(HID_T) :: memspace ! Dataspace identifier in memory
-	integer(HID_T) :: plist_id ! Property list identifier 
-	integer(HSIZE_T) dimsf(3),dimsfions(1), dimsflecs(1)
-	integer(HSIZE_T) dimsfi(7), dimsfiions(7), dimsfilecs(7)
-	integer ::skipflag,datarank
-	integer(HSIZE_T), DIMENSION(3) :: count  
-	integer(HSSIZE_T), DIMENSION(3) :: offset
-	integer(HSIZE_T), DIMENSION(1) :: countpart  
-	integer(HSSIZE_T), DIMENSION(1) :: offsetpart
-	!      integer ::istep1
-	
-	
-	ind=(lap)/torqint
-	write(fnametrq,"(a9,i3.3)") "ftrq.sml.",ind
-	if(rank.eq.0) write(*,*) rank,": name",fnametrq
-	
-	!      istep1= 4
-	skipflag=0
-	dimsf(1)=mx0/istep1
-	dimsf(2)=my0/istep1
-
-#ifndef twoD
-		dimsf(3)=mz0/istep1
-#else
-		dimsf(3)=1
-#endif
-	
-	dimsfi(1:3)=dimsf(1:3)
-	dimsfi(4:7)=0
-	datarank=3
-	
-	nvars=12
-	
-	if(debug .and. rank .eq. 0) print *, "in output_par_trq"
-	
-	kstart=3
-	kfinish=mz-3
-	if(rank/sizey .eq. 0) kstart=1
-	if(rank/sizey .eq. sizez-1) kfinish=mz
-	
-#ifndef twoD
-		110  if(modulo(kstart+(rank/sizey)*(mzall-5)-1*0,istep1) .eq. 0) goto 120
-		kstart=kstart+1
-		goto 110
-		120  continue
-		
-		130  if(modulo(kfinish+(rank/sizey)*(mzall-5)-1*0,istep1) .eq. 0) goto 140
-		kfinish=kfinish-1
-		goto 130
-		140  continue
-		mz1=(kfinish-kstart)/istep1+1
-#else
-		kstart=1
-		kfinish=1
-		mz1=1
-#endif
-	
-	jstart=3
-	jfinish=my-3
-	if(modulo(rank,sizey) .eq. 0) jstart=1
-	if(modulo(rank,sizey) .eq. sizey-1) jfinish=my
-	
-	
-	210  if(modulo(jstart+modulo(rank,sizey)*(myall-5)-1*0,istep1) .eq. 0) goto 220
-	jstart=jstart+1
-	goto 210
-	220  continue
-	
-	230  if(modulo(jfinish+modulo(rank,sizey)*(myall-5)-1*0,istep1).eq. 0) goto 240
-	jfinish=jfinish-1
-	goto 230
-	240  continue
-	
-	my1=(jfinish-jstart)/istep1+1
-	
-	!      print *, rank,":","mz1=", mz1, kstart, kfinish, istep1,mzall,mz
-	
-	allocate( temporary1(mx0/istep1,my1,mz1))
-	
-	!
-	!  Initialize FORTRAN predefined datatypes
-	!
-	call h5open_f(error) 
-	
-	! 
-	! Setup file access property list with parallel I/O access.
-	!
-#ifdef MPI
-		call h5pcreate_f(H5P_FILE_ACCESS_F, plist_id, error)
-		call h5pset_fapl_mpio_f(plist_id, mpi_comm_world, mpi_info_null, &
-		error)
-#endif
-
-	dsetname(1)="ex"
-	dsetname(2)="ey"
-	dsetname(3)="ez"
-	dsetname(4)="bx"
-	dsetname(5)="by"
-	dsetname(6)="bz"
-	dsetname(7)="dens"      
-	dsetname(8)="jx"
-	dsetname(9)="jy"
-	dsetname(10)="jz"
-	dsetname(11)="Temp"
-	dsetname(12)="dummy"
-	
-	!
-	! Create the file collectively.
-	! 
-
-#ifdef MPI
-		call h5fcreate_f(fnametrq, H5F_ACC_TRUNC_F, file_id, error, &
-		access_prp = plist_id)
-		call h5pclose_f(plist_id, error)
-#else
-		call h5fcreate_f(fnametrq, H5F_ACC_TRUNC_F, file_id, error)
-#endif
-
-	!
-	! Create the data space for the  dataset. 
-	!
-
-	do i=1,nvars
-		call h5screate_simple_f(datarank, dimsf, filespace(i), error)
-	enddo
-	!      print *,rank, ": filespace=",filespace
-	
-	!
-	! Create the dataset with default properties.
-	!
-	do i=1,nvars
-		call h5dcreate_f(file_id, dsetname(i), H5T_NATIVE_REAL, &
-		filespace(i),dset_id(i), error)
-		call h5sclose_f(filespace(i), error)
-	enddo
-	
-	!
-	! Each process defines dataset in memory and writes it to the hyperslab
-	! in the file. 
-	!
-	count(1) = dimsf(1)
-	count(2) = my1 !dimsf(2)
-	count(3) = mz1
-	
-	!need to communicate with others to find out the offset
-#ifdef MPI
-		call mpi_allgather(mz1,1,mpi_integer,all_counts,1,mpi_integer &
-		,mpi_comm_world, error)
-#endif
-
-	if(rank .eq. 0) print *, "allcounts mz1=",all_counts
-	offset(1) = 0
-	offset(2) = 0
-	offset(3) = 0
-	!z offset
-	if(rank/sizey .gt. 0) then 
-		offset(3) = sum(all_counts(1:(rank/sizey)*sizey:sizey))
-		if(debug)print *,rank,":","offset3=", offset(3), "count=",count
-	endif
-
-#ifdef twoD
-		offset(3)=0
-#endif
-#ifdef MPI
-		!now get the y offset
-		call mpi_allgather(my1,1,mpi_integer,all_counts,1,mpi_integer &
-		,mpi_comm_world, error)
-#endif
-
-	if(modulo(rank,sizey) .gt. 0) then 
-		offset(2)=sum( &
-		all_counts((rank/sizey)*sizey+1:rank))
-	endif
-
-	if(debug) print *,rank,":","offset2=",offset(2)
-	
-	if(debug)print *,rank,": offsets",offset 
-
-#ifdef MPI
-		call h5screate_simple_f(datarank, count, memspace, error) 
-#endif
-
-	!
-	! Create property list for collective dataset write
-	!
-#ifdef MPI
-		call h5pcreate_f(H5P_DATASET_XFER_F, plist_id, error) 
-		call h5pset_dxpl_mpio_f(plist_id, H5FD_MPIO_COLLECTIVE_F, error)
-#endif
-	! 
-	! Select hyperslab in the file.
-	!
-	do iv=1,nvars
-#ifdef MPI
-			call h5dget_space_f(dset_id(iv), filespace(iv), error)
-			
-			
-			call h5sselect_hyperslab_f (filespace(iv),H5S_SELECT_SET_F,offset &
-			,count, error)
-#endif
-	
-		!
-		! Write the dataset collectively. 
-		!
-		!      print *,rank,": before h5dwrite" 
-		!      temporary1=temporary_arr(:,:,:,iv)
-		!_arr(:,:,:,iv)
-		
-		do k=kstart, kfinish, istep1 !1,mz/istep1
-			nz=(k-kstart)/istep1+1
-			do j=jstart, jfinish,istep1 !1,my/istep1
-				ny=(j-jstart)/istep1+1
-				do i=1,mx/istep1
-					
-					call interpolfld(real(i*istep1),real(j),real(k),bx0 &
-					,by0,bz0,ex0,ey0,ez0,bxd,byd,bzd,exd,eyd,ezd)
-					
-					if(iv.eq.1)temporary1(i,ny,nz)=real(ex0+exd,4)
-					if(iv.eq.2)temporary1(i,ny,nz)=real(ey0+eyd,4)
-					if(iv.eq.3)temporary1(i,ny,nz)=real(ez0+ezd,4)
-					if(iv.eq.4)temporary1(i,ny,nz)=real(bx0+bxd,4)
-					if(iv.eq.5)temporary1(i,ny,nz)=real(by0+byd,4)
-					if(iv.eq.6)temporary1(i,ny,nz)=real(bz0+bzd,4)
-					if(iv.eq.7)temporary1(i,ny,nz)=real(nav(i*istep1,j,k),4)
-					
-					call interpolcurrent(real(i*istep1),real(j),real(k) &
-					,curx0, cury0, curz0)
-					
-					if(iv.eq.8)temporary1(i,ny,nz)=real(curx0,4)
-					if(iv.eq.9)temporary1(i,ny,nz)=real(cury0,4)
-					if(iv.eq.10)temporary1(i,ny,nz)=real(curz0,4)
-					if(iv.eq.11)temporary1(i,ny,nz)=real(temp(i*istep1,j,k),4)
-					if(iv.eq.12)temporary1(i,ny,nz)=0. !real(rh(i*istep1,j,k),4)
-					
-				enddo
-			enddo
-		enddo
-		
-#ifdef MPI       
-			call h5dwrite_real_1(dset_id(iv), H5T_NATIVE_REAL, temporary1(:,: &
-			,:),dimsfi,error,file_space_id = filespace(iv), mem_space_id &
-			=memspace,xfer_prp = plist_id)
-			
-#else
-			call h5dwrite_f(dset_id(iv), H5T_NATIVE_REAL, temporary1(:,: &
-			,:),dimsfi,error)
-			
-#endif
-	
-	enddo !ivar
-
-	!
-	! Close dataspaces.
-	!
-
-#ifdef MPI
-		do iv=1,nvars
-			call h5sclose_f(filespace(iv), error)
-		enddo
-		call h5sclose_f(memspace, error)
-#endif
-
-	!
-	! Close the dataset and property list.
-	!
-
-	do iv=1,nvars
-		call h5dclose_f(dset_id(iv), error)
-	enddo
-
-#ifdef MPI
-		call h5pclose_f(plist_id, error)
-#endif
-
-	!
-	! Close the file.
-	!
-	call h5fclose_f(file_id, error)
-	!
-	! Close FORTRAN predefined datatypes.
-	!
-	call h5close_f(error)
-	
-	if(debug) print *, rank,": finished writing fields"
-	
-	
-	mx1=mx/istep
-	my1=my/istep
-	mz1=mz/istep
-	
-	goto 7001
-	!-------------------------------------
-	!now write particles
-	
-	!
-	!  Initialize FORTRAN predefined datatypes
-	!
-	call h5open_f(error) 
-	
-	! 
-	! Setup file access property list with parallel I/O access.
-	!
-#ifdef MPI
-		call h5pcreate_f(H5P_FILE_ACCESS_F, plist_id, error)
-		call h5pset_fapl_mpio_f(plist_id, mpi_comm_world, mpi_info_null, &
-		error)
-#endif
-
-	nvars=14
-	midvars=7
-	stride=20 !1 !100 !60 !15 !*4
-	dsetname(1)="xi"
-	dsetname(2)="yi"
-	dsetname(3)="zi"
-	dsetname(4)="ui"
-	dsetname(5)="vi"
-	dsetname(6)="wi"
-	dsetname(7)="gammai"
-	dsetname(8)="xe"
-	dsetname(9)="ye"
-	dsetname(10)="ze"
-	dsetname(11)="ue"
-	dsetname(12)="ve"
-	dsetname(13)="we"
-	dsetname(14)="gammae"
-	
-	dsetname(15)="spectrum"
-	!need to add writing spectrum from root
-	
-	datarank=1
-	!find out number of ions and lecs
-#ifdef MPI
-		call mpi_allgather(ions,1,mpi_integer,all_ions,1,mpi_integer &
-		,mpi_comm_world, error)
-		call mpi_allgather(lecs,1,mpi_integer,all_lecs,1,mpi_integer &
-		,mpi_comm_world, error)
-#else
-		all_ions=ions
-		all_lecs=lecs
-#endif
-	
-	dimsfions(1)=sum(all_ions/stride*1.)
-	dimsflecs(1)=sum(all_lecs/stride*1.)
-	dimsfiions(1)=dimsfions(1)
-	dimsfilecs(1)=dimsflecs(1)
-	dimsfiions(2:7)=0
-	dimsfilecs(2:7)=0
-
-	if(rank .eq. 0) then 
-		print *, "all_ions", all_ions
-		print *, "all_lecs", all_lecs
-		print *,"dimsions", sum(all_ions/stride*1.)
-		print *,"dimslecs", sum(all_lecs/stride*1.)
-	endif
-	
-	allocate(temporary_vec(max(ions/stride,lecs/stride)))
-	
-	!
-	! Create the file collectively.
-	! 
-#ifdef MPI
-		call h5fcreate_f(fnameprt, H5F_ACC_TRUNC_F, file_id, error, &
-		access_prp = plist_id)
-		call h5pclose_f(plist_id, error)
-#else
-		call h5fcreate_f(fnameprt, H5F_ACC_TRUNC_F, file_id, error)
-#endif
-	
-	!
-	! Create the data space for the  dataset. 
-	!
-	do i=1,midvars
-		call h5screate_simple_f(datarank, dimsfions(1), filespace(i), &
-		error)
-	enddo
-	do i=midvars+1,nvars
-		call h5screate_simple_f(datarank, dimsflecs(1), filespace(i), &
-		error)
-	enddo
-	
-	!
-	! Create the dataset with default properties.
-	!
-	do i=1,nvars
-		call h5dcreate_f(file_id, dsetname(i), H5T_NATIVE_REAL, &
-		filespace(i),dset_id(i), error)
-		call h5sclose_f(filespace(i), error)
-	enddo
-	
-	!
-	! Create property list for collective dataset write
-	!
-#ifdef MPI
-		call h5pcreate_f(H5P_DATASET_XFER_F, plist_id, error) 
-		call h5pset_dxpl_mpio_f(plist_id, H5FD_MPIO_COLLECTIVE_F, error)
-#endif
-	! 
-	! Select hyperslab in the file.
-	!
-	do i=1,nvars
-		
-		!
-		! Each process defines dataset in memory and writes it to the hyperslab
-		! in the file. 
-		!
-		if(i.le.midvars)countpart = ions/stride
-		if(i.gt.midvars)countpart = lecs/stride
-		
-		!      if(rank .eq. 0) print *, "allcounts=",all_counts
-		offsetpart = 0
-		if(rank .gt. 0) then 
-			if(i .le. midvars) then
-				offsetpart = sum(all_ions(1:rank)/stride)
-			else
-				offsetpart = sum(all_lecs(1:rank)/stride)
-			endif
-		endif
-#ifdef MPI
-			call h5screate_simple_f(1, countpart, memspace, error) 
-			
-			call h5dget_space_f(dset_id(i), filespace(i), error)
-			call h5sselect_hyperslab_f (filespace(i),H5S_SELECT_SET_F &
-			,offsetpart,countpart, error)
-#endif
-		!
-		! Write the dataset collectively. 
-		!
-		!      print *,rank,": before h5dwrite" 
-		!      temporary1=temporary_arr(:,:,:,i)
-		!_arr(:,:,:,i)
-		
-		if(i.eq.1)  temporary_vec(1:ions/stride)=p(1:ions:stride)%x
-		if(i.eq.2) temporary_vec(1:ions/stride)=p(1:ions:stride)%y
-		if(i.eq.3) temporary_vec(1:ions/stride)=p(1:ions:stride)%z+rank &
-		*(mzall-5)
-		if(i.eq.4) temporary_vec(1:ions/stride)=p(1:ions:stride)%u
-		if(i.eq.5) temporary_vec(1:ions/stride)=p(1:ions:stride)%v
-		if(i.eq.6) temporary_vec(1:ions/stride)=p(1:ions:stride)%w
-		!         if(i.eq.7) temporary_vec(1:ions/stride)=sqrt(1./(1.
-		!     &             -(p(1:ions:stride)%u**2+p(1:ions:stride)%v**2
-		!     &             +p(1:ions:stride)%w **2)/c**2))
-		
-		if(i.eq.7) temporary_vec(1:ions/stride)=sqrt(1. &
-		+(p(1:ions:stride)%u**2+p(1:ions:stride)%v**2 &
-		+p(1:ions:stride)%w**2))
-		
-		
-		if(i.eq.8) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-		+lecs:stride)%x
-		if(i.eq.9) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-		+lecs:stride)%y
-		if(i.eq.10) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-		+lecs:stride)%z+rank*(mzall-5)
-		if(i.eq.11) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-		+lecs:stride)%u
-		if(i.eq.12) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-		+lecs:stride)%v
-		if(i.eq.13) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-		+lecs:stride)%w
-		!         if(i.eq.14) temporary_vec(1:lecs/stride)=sqrt(1./(1. -(p(maxhlf
-		!     &             +1:maxhlf+lecs:stride)%u**2+p(maxhlf+1:maxhlf +lecs:stride
-		!     &             )%v**2+p(maxhlf +1:maxhlf+lecs:stride)%w**2)/c**2))
-		
-		if(i.eq.14) temporary_vec(1:lecs/stride)=sqrt(1. +(p(maxhlf &
-		+1:maxhlf+lecs:stride)%u**2+p(maxhlf+1:maxhlf +lecs:stride &
-		)%v**2+p(maxhlf +1:maxhlf+lecs:stride)%w**2))
-		
-#ifdef MPI
-			if(i .le. midvars) then 
-				call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
-				temporary_vec(1:ions/stride), dimsfiions,error &
-				,file_space_id = filespace(i), mem_space_id=memspace &
-				,xfer_prp = plist_id)
-			else 
-				call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
-				temporary_vec(1:lecs/stride), dimsfilecs,error &
-				,file_space_id = filespace(i), mem_space_id=memspace &
-				,xfer_prp = plist_id)
-			endif
-#else
-			if(i .le. midvars) then 
-				call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
-				temporary_vec(1:ions/stride), dimsfiions,error)
-			else 
-				call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
-				temporary_vec(1:lecs/stride), dimsfilecs,error)
-			endif
-			
-#endif
-#ifdef MPI
-			call h5sclose_f(memspace,error)
-#endif
-	enddo
-	!
-	! Close dataspaces.
-	!
-	do i=1,nvars
-		call h5sclose_f(filespace(i), error)
-	enddo
-	!
-	! Close the dataset and property list.
-	!
-	do i=1,nvars
-		call h5dclose_f(dset_id(i), error)
-	enddo
-#ifdef MPI
-		call h5pclose_f(plist_id, error)
-#endif
-	!
-	! Close the file.
-	!
-	call h5fclose_f(file_id, error)
-	!
-	! Close FORTRAN predefined datatypes.
-	!
-	call h5close_f(error)
-	
-	if(debug) print *, rank,": finished writing particles"
-	
-	!now write particles
-	!      if(rank.eq.0)then
-	
-	is=1
-	
-	goto 1000
-	
-	write(12)real((ions/is),4),real((lecs/is),4), &
-	real(maxptl,4),real(maxhlf,4), &
-	(real(p(n)%x,4),n=1,(ions/is)*is,is), &
-	(real(p(n)%x,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-	(real(p(n)%y,4),n=1,(ions/is)*is,is), &
-	(real(p(n)%y,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-	(real(p(n)%z,4),n=1,(ions/is)*is,is), &
-	(real(p(n)%z,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-	(real(p(n)%u,4),n=1,(ions/is)*is,is), &
-	(real(p(n)%u,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-	(real(p(n)%v,4),n=1,(ions/is)*is,is), &
-	(real(p(n)%v,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-	(real(p(n)%w,4),n=1,(ions/is)*is,is), &
-	(real(p(n)%w,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is),     &
-	(real(1./sqrt(1.-(p(n)%u**2+p(n)%v**2+p(n)%w**2)/c**2),4),  &
-	n=1,(ions/is)*is,is), &
-	(real(1./sqrt(1.-(p(n)%u**2+p(n)%v**2+p(n)%w**2)/c**2),4),  &
-	n=maxhlf+1,maxhlf+(lecs/is)*is,is)
-	
-	1000 continue
-	
-	7001 continue
-	deallocate(temporary1) !, temporary_vec)
-	
-	
-end subroutine output_trq
-
-
-
-!-------------------------------------------------------------------------------
-! 						subroutine output_par					 
-!																		
-!
-!  							
-!-------------------------------------------------------------------------------
-
-subroutine output_par()
-
-	implicit none
-
-	! local variables
-	
-	integer ::sendbuf
-	logical exst1
-	
-	integer ::ind, is, kglob, kloc, kstart, kfinish,nz, fh,info, n, i, j, k, ierr
-	integer ::jstart, jfinish,ny, iv, mz1, my1, mx1
-	real bx0,by0,bz0,ex0,ey0 ,ez0,bxd,byd,bzd,exd,eyd,ezd, curx0, &
-	cury0, curz0
-	real*4,allocatable:: temporary_arr(:,:,:,:),temporary_vec(:)
-	integer ::error, error_n  ! Error flags
-	integer ::nvars, midvars!,stride
-	integer ::all_counts(size0) ! array to know the sizes of other proc array
-	integer ::all_ions(size0), all_lecs(size0)
-	
-	integer*8 all_ions_lng(size0), all_lecs_lng(size0)
-	
-	character(len=10) dsetname(40),dsetnamei(30),dsetnamer(30)
-	character(len=20) fparam
-	integer,dimension(30)::intdata,dsetsav,dsetbool
-	real,dimension(30)::realdata
-	integer(HID_T) :: file_id ! File identifier 
-	integer(HID_T) :: dset_id(40) ! Dataset identifier 
-	integer(HID_T) :: filespace(40) ! Dataspace identifier in file 
-	integer(HID_T) :: memspace ! Dataspace identifier in memory
-	integer(HID_T) :: plist_id ! Property list identifier 
-	
-	!for MPI_Info
-	
-	integer ::FILE_INFO_TEMPLATE
-	character keyval*20
-	integer ::keyflag
-	integer ::procn
-	integer ::my1list(size0),mz1list(size0) 
-	real*4, allocatable :: temporary0(:,:,:), temporary0_vec(:) 
-	
-	integer(HSIZE_T) dimsf(3),dimsfions(1), dimsflecs(1)
-	integer(HSIZE_T)dimsfi(7), dimsfiions(7), dimsfilecs(7)
-	integer ::skipflag,datarank
-	integer(HSIZE_T), DIMENSION(3) :: count  
-	integer(HSSIZE_T), DIMENSION(3) :: offset
-	integer(HSIZE_T), DIMENSION(1) :: countpart  
-	integer(HSSIZE_T), DIMENSION(1) :: offsetpart
-	integer ::token, request,status(MPI_STATUS_SIZE),request1 &
-	,status1(MPI_STATUS_SIZE)
-	integer ::tmp1
-	real tmp1r
-	integer(hid_t) :: fapl
-	integer(hsize_t) :: family_size=1000000
-
-	integer ::istep0
-	
-	skipflag=0
-	dimsf(1)=mx0/istep
-	dimsf(2)=my0/istep
-
-#ifndef twoD
-		dimsf(3)=mz0/istep
-#else
-		dimsf(3)=1
-#endif 
-	
-	dimsfi(1:3)=dimsf(1:3)
-	dimsfi(4:7)=0
-	datarank=3
-	
-	nvars=16-5
-	
-	!save restart file
-	!naming convention: write to rest(flds/prtl).jobname.rank.d
-	!if the interval is met, rename the file into rest(flds/prtl).jobname.lapNNNNN.rank.d
-	
-	sendbuf=0
-	if(rank .eq. 0) then 
-		inquire(file="write_restart",exist=exst1)
-		if(exst1)sendbuf=1
-	endif
-
-	call mpi_bcast(sendbuf,1,mpi_integer,0,mpi_comm_world,ierr)
-	exst1=.false.
-
-	if(sendbuf .eq. 1) exst1=.true.
-	
-	if(modulo(lap,1) .eq.0 .or. exst1 ) then
-	
+  if(sendbuf .eq. 1) exst1=.true.
+  
+  if(modulo(lap,1) .eq.0 .or. exst1) then
+     
 #ifdef LOCALRESTART
-			if(intrestlocal .gt. 0 .and. modulo(lap,intrestlocal) .eq.0) then 
-				open(unit=7,file=frestartfldloc, form='unformatted')
-				rewind 7
-				if(rank.eq.0)print *, rank, ": writing local restart file"
-				write(7)mx,my,mz0,mz,ex,ey,ez,bx,by,bz,dseed,lap,xinject &
-				,xinject2,leftwall,split_E_ions,split_E_lecs 
-				close(7)
-				
-				!            open(unit=8,file=frestartprt, form='unformatted')
-				!            close(8,status='delete')
-				
-				open(unit=8,file=frestartprtloc, form='unformatted')
-				rewind 8
-				print *, rank,": wrote fields, writing local particles"
-				
-				write(8)ions,lecs,maxptl,maxhlf, &
-				(p(n)%x,n=1,ions),(p(n)%x,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%y,n=1,ions),(p(n)%y,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%z,n=1,ions),(p(n)%z,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%u,n=1,ions),(p(n)%u,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%v,n=1,ions),(p(n)%v,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%w,n=1,ions),(p(n)%w,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%ch,n=1,ions),(p(n)%ch,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%ind,n=1,ions),(p(n)%ind,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%proc,n=1,ions),(p(n)%proc,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%splitlev,n=1,ions), &
-				(p(n)%splitlev,n=maxhlf+1,maxhlf+lecs)
-				
-				close(8)
-			endif ! if(modulo(lap,intrestlocal) .eq.0)
-			7645       continue
-#endif
-		!------------------------------
-		
-		call MPI_BARRIER(MPI_COMM_WORLD,ierr)
-		
-		!     check if I have time to save the restart file
-		if(modulo(lap,intrestart) .eq. 0  .or.exst1) then
-			if(rank.eq.0) then
-				time_end=mpi_wtime()
-				time_diff=time_end-time_beg !elapsed time
-				print *,"times for restart",real(timespan,4), &
-				real(time_diff,4),real(time_cut,4) 
-				if(timespan-time_diff.gt.time_cut)then 
-					restart_status=1
-				else
-					restart_status=0
-				endif
-			endif
+     if(intrestlocal .gt. 0 .and. modulo(lap,intrestlocal) .eq.0) then 
+        open(unit=7,file=frestartfldloc, form='unformatted')
+        rewind 7
+        if(rank.eq.0)print *, rank, ": writing local restart file"
+        write(7)mx,my,mz,ex,ey,ez,bx,by,bz,dseed,lap,xinject &
+             ,xinject2,xinject3,leftwall !,split_E_ions,split_E_lecs 
+        close(7)
 
-			call MPI_BCAST(restart_status,1,MPI_INTEGER,0, &
-			MPI_COMM_WORLD,ierr)               
-			print *,"rank, restart_status",rank,restart_status
-		endif
-		
-		call MPI_BARRIER(MPI_COMM_WORLD,ierr)                
-		
-		if((modulo(lap,intrestart) .eq. 0  .or.exst1) .and. restart_status .eq. 1) then 
-		
-			!install a semaphore
-			
-#ifdef MPI
-				if(rank .gt. 0) then 
-					token=rank-1
-					!wait for the message from the previous rank
-					call mpi_irecv(token,1, &
-					mpi_integer,rank-1,100,MPI_Comm_WORLD,request,ierr)
-					call mpi_wait(request,status,ierr)
-					
-					print *,"rank ",rank," received the token from ",rank-1
-					
-					if(modulo(rank,15).ne.0 .and. rank .ne. size0-1) then
-						token=rank
-						call mpi_isend(token,1, &
-						mpi_integer,rank+1,100,MPI_Comm_WORLD,request1,ierr)
-						call mpi_wait(request1,status1,ierr)
-					endif
-				endif
-				3004        continue
-#endif
-			
-			open(unit=7,file=frestartfld, form='unformatted')
-			close(7,status='delete')
-			
-			open(unit=7,file=frestartfld, form='unformatted')
-			rewind 7
-			if(rank.eq.0)print *, rank, ": writing restart file"
-			write(7)mx,my,mz0,mz,ex,ey,ez,bx,by,bz,dseed,lap,xinject &
-			,xinject2,leftwall,split_E_ions,split_E_lecs 
-			close(7)
-			
-			open(unit=8,file=frestartprt, form='unformatted')
-			close(8,status='delete')
-			
-			open(unit=8,file=frestartprt, form='unformatted')
-			rewind 8
-			if(rank .eq. 0) print *, rank,": wrote fields, writing particles"
-			
-			write(8)ions,lecs,maxptl,maxhlf, &
-			(p(n)%x,n=1,ions),(p(n)%x,n=maxhlf+1,maxhlf+lecs), &
-			(p(n)%y,n=1,ions),(p(n)%y,n=maxhlf+1,maxhlf+lecs), &
-			(p(n)%z,n=1,ions),(p(n)%z,n=maxhlf+1,maxhlf+lecs), &
-			(p(n)%u,n=1,ions),(p(n)%u,n=maxhlf+1,maxhlf+lecs), &
-			(p(n)%v,n=1,ions),(p(n)%v,n=maxhlf+1,maxhlf+lecs), &
-			(p(n)%w,n=1,ions),(p(n)%w,n=maxhlf+1,maxhlf+lecs), &
-			(p(n)%ch,n=1,ions),(p(n)%ch,n=maxhlf+1,maxhlf+lecs), &
-			(p(n)%ind,n=1,ions),(p(n)%ind,n=maxhlf+1,maxhlf+lecs), &
-			(p(n)%proc,n=1,ions),(p(n)%proc,n=maxhlf+1,maxhlf+lecs), &
-			(p(n)%splitlev,n=1,ions), &
-			(p(n)%splitlev,n=maxhlf+1,maxhlf+lecs)
-			
-			close(8)
-			!           if(rank.eq.0) 
-			if(rank.eq.0)print *, rank, ": done writing restart file"
-			
-			if(modulo(lap,namedrestartint) .eq. 0) then
-				if(rank.eq.0)print *, rank, ": renaming restart"
-				write(lapchar,"(i6.6)")lap	
-				frestartfldlap="restart/restflds."//trim(jobname) &
-				//"."//"lap"//trim(lapchar)//"."//trim(rankchar)//".d"
-				frestartprtlap="restart/restprtl."//trim(jobname) &
-				//"."//"lap"//trim(lapchar)//"."//trim(rankchar)//".d"
-				
-				
-				open(unit=7,file=frestartfldlap, form='unformatted')
-				close(7,status='delete')
-				
-				open(unit=7,file=frestartfldlap, form='unformatted')
-				rewind 7
-				if(rank.eq.0)print *, rank, ": writing laprestart file"
-				write(7)mx,my,mz0,mz,ex,ey,ez,bx,by,bz,dseed,lap,xinject &
-				,xinject2,leftwall,split_E_ions,split_E_lecs 
-				close(7)
-				
-				open(unit=8,file=frestartprtlap, form='unformatted')
-				close(8,status='delete')
-				
-				open(unit=8,file=frestartprtlap, form='unformatted')
-				rewind 8
-				if(rank.eq.0)print *, rank,": wrote fields, writing particles"
-				
-				write(8)ions,lecs,maxptl,maxhlf, &
-				(p(n)%x,n=1,ions),(p(n)%x,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%y,n=1,ions),(p(n)%y,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%z,n=1,ions),(p(n)%z,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%u,n=1,ions),(p(n)%u,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%v,n=1,ions),(p(n)%v,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%w,n=1,ions),(p(n)%w,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%ch,n=1,ions),(p(n)%ch,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%ind,n=1,ions),(p(n)%ind,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%proc,n=1,ions),(p(n)%proc,n=maxhlf+1,maxhlf+lecs), &
-				(p(n)%splitlev,n=1,ions), &
-				(p(n)%splitlev,n=maxhlf+1,maxhlf+lecs)
-				
-				close(8)
-				!           if(rank.eq.0) 
-				if(rank.eq.0)print *, rank, ": done writing restart file"
-			endif
-			
-			!send the message to the next rank, if not the last
-		
-#ifdef MPI
-				if(modulo(rank,15).eq.0 .and. rank .ne. size0-1) then
-					token=rank
-					call mpi_isend(token,1, &
-					mpi_integer,rank+1,100,MPI_Comm_WORLD,request,ierr)
-				endif
-				2121      continue
-				
-				call mpi_barrier(MPI_COMM_WORLD,ierr)
-#endif
-			
-			if(rank .eq. 0 .and. exst1) then 
-				open(unit=11,file="write_restart",form='unformatted')
-				close(11,status='delete')
-			endif
-			
-			!after a barrier can delete the temporary files in /tmp
-			!            open(unit=7,file=frestartfldloc, form='unformatted')
-			!            close(7,status='delete')
-			!            open(unit=7,file=frestartprtloc, form='unformatted')
-			!            close(7,status='delete')
-			
-		endif ! modulo lap 1000
-	endif                  !modulo lap,200
-	
-	!-------------------------------------
-	!------------------------------------end restarts
-	
-	!----now save the data
+        open(unit=8,file=frestartprtloc, form='unformatted')
+        rewind 8
+        if(rank.eq.0)print *, rank,": wrote fields, writing local particles"
 
-	if(lap .ge.pltstart .and. modulo((lap-pltstart),interval) .eq.0 .or. lap .eq. -150001 )then
-		!     &             .or.lap.eq.1) then
-		ind=(lap-pltstart)/interval
-		
-		!          write(fnamefld,"(a16,i3.3)") "output/fl%d.tot.",ind
-		
-		
-		write(fnamefld,"(a16,i3.3)") "output/flds.tot.",ind
-		write(fnameprt,"(a16,i3.3)") "output/prtl.tot.",ind
-		
-		write(indchar,"(i3.3)")ind
-				
-		if(rank.eq.0)write(*,*) rank,": ",fnamefld, '  ',fnameprt
-		
-		!just in case destroy the file
-		if(rank .eq. 0) then 
-			open(unit=11,file=fnamefld,form='unformatted')
-			close(11,status='delete')
-			!             open(unit=11,file=fnamefld,form='unformatted')
-			
-			open(unit=12,file=fnameprt,form='unformatted')
-			close(12,status='delete')
-		endif
-	
-		call MPI_BARRIER(MPI_COMM_WORLD,ierr)
-		
-		if(debug) print *,"in output_par, b4 density"
-		!       rh=0
-		!       call density(1,ions) !,maxptl,p.x,p.y,p.z,mx,my,mz,rh)
-		!       call meanq()
-		
-		!!!!       call meanq_dens_cur() !compute density 
-		
-		!       call spectrum()
-		if(rank.eq.0)print *,"out of meanq"
-		
-		
-#ifndef serIO 
-	
-			!defining the template for writing
-			!     to be inserted after each instance of h5pcreate_f
-			!     call H5Pset_sieve_buf_size_f(plist_id, 262144,error) 
-			!     call H5Pset_alignment_f(plist_id, 524288, 262144,error)
-			
-#ifdef MPI      
-				call MPI_Info_create(FILE_INFO_TEMPLATE,error)
-				!      call MPI_Info_set(FILE_INFO_TEMPLATE, "IBM_largeblock_io", 
-				!     &          "true", error)
-				call MPI_Info_set(FILE_INFO_TEMPLATE, "access_style",  &
-				"write_once",error)
-				call MPI_Info_set(FILE_INFO_TEMPLATE,  &
-				"collective_buffering", "true",error)
-				call MPI_Info_set(FILE_INFO_TEMPLATE, "cb_block_size", &
-				"4194304",error)
-				call MPI_Info_set(FILE_INFO_TEMPLATE, "cb_buffer_size", &
-				"16777216",error)
-				call MPI_Info_set(FILE_INFO_TEMPLATE, "cb_nodes", &
-				"1",error)
-#endif
-			
-			
-			if(debug .and. rank .eq. 0) print *, "in output_par"
-			
-			kstart=3
-			kfinish=mz-3
-			if(rank/sizey .eq. 0) kstart=1
-			if(rank/sizey .eq. sizez-1) kfinish=mz
-			
-			
-			110  if(modulo(kstart+(rank/sizey)*(mzall-5)-1*0,istep) .eq. 0) goto 120
-			kstart=kstart+1
-			goto 110
-			120  continue
-			
-			130  if(modulo(kfinish+(rank/sizey)*(mzall-5)-1*0,istep) .eq. 0) goto 140
-			kfinish=kfinish-1
-			goto 130
-			140  continue
-			mz1=(kfinish-kstart)/istep+1
-	
-#ifdef twoD
-				kstart=1
-				kfinish=1
-				mz1=1
-#endif
-			
-			jstart=3
-			jfinish=my-3
-			if(modulo(rank,sizey) .eq. 0) jstart=1
-			if(modulo(rank,sizey) .eq. sizey-1) jfinish=my
-			
-			
-			210  if(modulo(jstart+modulo(rank,sizey)*(myall-5)-1*0,istep) .eq. 0) goto 220
-			jstart=jstart+1
-			goto 210
-			220  continue
-			
-			230  if(modulo(jfinish+modulo(rank,sizey)*(myall-5)-1*0,istep) .eq. 0) goto 240
-			jfinish=jfinish-1
-			goto 230
-			240  continue
-			
-			my1=(jfinish-jstart)/istep+1
-			
-			!      print *, rank,":","mz1=", mz1, kstart, kfinish, istep,mzall,mz
-			
-			if(debug) print *, rank,"in output b4 allocate"
-			allocate( temporary1(mx0/istep,my1,mz1))
-			
-			!
-			!  Initialize FORTRAN predefined datatypes
-			!
-			call h5open_f(error) 
-			
-			! 
-			! Setup file access property list with parallel I/O access.
-			!
-			
-#ifdef MPI
-				call h5pcreate_f(H5P_FILE_ACCESS_F, plist_id, error)
-				!      call H5Pset_sieve_buf_size_f(plist_id, 262144,error) 
-				!      call H5Pset_alignment_f(plist_id, 524288, 262144,error)
-				call h5pset_fapl_mpio_f(plist_id, mpi_comm_world, &
-				FILE_INFO_TEMPLATE,error)
-#endif
-	
-			if(debug) print *,"flds.tot.",ind,rank,"done 0f"
-			
-			if(debug) print *, rank,"h5pset"
-			dsetname(1)="ex"
-			dsetname(2)="ey"
-			dsetname(3)="ez"
-			dsetname(4)="bx"
-			dsetname(5)="by"
-			dsetname(6)="bz"
-			dsetname(7)="ux"
-			dsetname(8)="uy"
-			dsetname(9)="uz"
-			dsetname(10)="Temp"
-			dsetname(11)="dens"
-			dsetname(12)="densi"
-			dsetname(13)="dummy"
-			dsetname(14)="jx"
-			dsetname(15)="jy"
-			dsetname(16)="jz"
-			
-			
-			dsetname(1)="ex"
-			dsetname(2)="ey"
-			dsetname(3)="ez"
-			dsetname(4)="bx"
-			dsetname(5)="by"
-			dsetname(6)="bz"
-			!      dsetname(7)="ux"
-			!      dsetname(8)="uy"
-			!      dsetname(9)="uz"
-			!      dsetname(10)="Temp"
-			dsetname(11-4)="dens"
-			dsetname(12-4)="densi"
-			!      dsetname(13)="dummy"
-			dsetname(14-5)="jx"
-			dsetname(15-5)="jy"
-			dsetname(16-5)="jz"
-			
-			!
-			! Create the file collectively.
-			! 
-#ifdef MPI
-				call h5fcreate_f(fnamefld, H5F_ACC_TRUNC_F, file_id, error, &
-				access_prp = plist_id)
-				call h5pclose_f(plist_id, error)
-#else
-				call h5fcreate_f(fnamefld, H5F_ACC_TRUNC_F, file_id, error)
-#endif
-			!
-			! Create the data space for the  dataset. 
-			!
-			do i=1,nvars
-				call h5screate_simple_f(datarank, dimsf, filespace(i), error)
-			enddo
-			!      print *,rank, ": filespace=",filespace
-			
-			if(debug) print *,"flds.tot.",ind,rank,"done 1f"
-			
-			!
-			! Create the dataset with default properties.
-			!
-			do i=1,nvars
-				call h5dcreate_f(file_id, dsetname(i), H5T_NATIVE_REAL, &
-				filespace(i),dset_id(i), error)
-				call h5sclose_f(filespace(i), error)
-			enddo
-			
-			!
-			! Each process defines dataset in memory and writes it to the hyperslab
-			! in the file. 
-			!
-			count(1) = dimsf(1)
-			count(2) = my1 !dimsf(2)
-			count(3) = mz1
-			
-			!need to communicate with others to find out the offset
-#ifdef MPI
-				if(debug) print *, rank,": in output, b4 allgather", mz1
-				call mpi_allgather(mz1,1,mpi_integer,all_counts,1,mpi_integer &
-				,mpi_comm_world, error)
-#endif
-			if(debug .and. rank .eq. 0) print *, "allcounts mz1=",all_counts
-			offset(1) = 0
-			offset(2) = 0
-			offset(3) = 0
-			!z offset
-			if(rank/sizey .gt. 0) then 
-				offset(3) = sum(all_counts(1:(rank/sizey)*sizey:sizey))
-				!      print *,rank,":","offset=", offset(3), "count=",count
-			endif
-#ifdef twoD 
-				offset(3)=0
-#endif
-			!now get the y offset
-#ifdef MPI
-				call mpi_allgather(my1,1,mpi_integer,all_counts,1,mpi_integer &
-				,mpi_comm_world, error)
-#endif
-			if(modulo(rank,sizey) .gt. 0) then 
-				offset(2)=sum(all_counts((rank/sizey)*sizey+1:rank))
-			endif
-			if(debug)print *,rank,":","offset=",offset(2),"count=",count
-#ifdef MPI
-				call h5screate_simple_f(datarank, count, memspace, error) 
-#endif
-			!
-			! Create property list for collective dataset write
-			!
-#ifdef MPI
-				call h5pcreate_f(H5P_DATASET_XFER_F, plist_id, error) 
-				call h5pset_dxpl_mpio_f(plist_id, H5FD_MPIO_COLLECTIVE_F, error)
-#endif
-			
-			if(debug)print *,"flds.tot.",ind,rank,"done 2f"
-			! 
-			! Select hyperslab in the file.
-			!
-			open(unit=7,file=fenlargeloc, form='unformatted')
-			rewind 7
-			write(7) (((curx(i,j,k),i=1,mx),j=1,my),k=1,mz), &
-			(((cury(i,j,k),i=1,mx),j=1,my),k=1,mz)
-			close(7)
-	
-			do iv=1,nvars
-				if(debug)print *,rank,"iv=",iv
-				
-				if(iv .eq. 11-4) call meanq_dens_cur()
-				if(iv .eq. 14-5) then 
-					!restore currents from file
-					open(unit=7,file=fenlargeloc, form='unformatted')
-					rewind 7
-					if(debug .and. rank.eq.0) print *, rank,":reading back current file"
-					read(7)(((curx(i,j,k),i=1,mx),j=1,my),k=1,mz), &
-					(((cury(i,j,k),i=1,mx),j=1,my),k=1,mz)
-					!      close(7,status='delete')
-					if(debug .and. rank .eq.0)print *, rank,"resetting arrays"
-					
-				endif
-				
-#ifdef MPI      
-					call h5dget_space_f(dset_id(iv), filespace(iv), error)
-					
-					call h5sselect_hyperslab_f(filespace(iv),H5S_SELECT_SET_F,offset &
-					,count, error)
-#endif
-				
-				if(debug)print *,rank,": selected hyperslab"
-				!
-				! Write the dataset collectively. 
-				!
-				!      print *,rank,": before h5dwrite" 
-				!      temporary1=temporary_arr(:,:,:,iv)
-				!_arr(:,:,:,iv)
-				
-				do k=kstart, kfinish, istep !1,mz/istep
-					nz=(k-kstart)/istep+1
-					do j=jstart, jfinish,istep !1,my/istep
-						ny=(j-jstart)/istep+1
-						do i=1,mx/istep
-							
-							call interpolfld(real(i*istep),real(j),real(k),bx0 &
-							,by0,bz0,ex0,ey0,ez0,bxd,byd,bzd,exd,eyd,ezd)
-							
-							if(iv.eq.1)temporary1(i,ny,nz)=real(ex0+exd,4)
-							if(iv.eq.2)temporary1(i,ny,nz)=real(ey0+eyd,4)
-							if(iv.eq.3)temporary1(i,ny,nz)=real(ez0+ezd,4)
-							if(iv.eq.4)temporary1(i,ny,nz)=real(bx0+bxd,4)
-							if(iv.eq.5)temporary1(i,ny,nz)=real(by0+byd,4)
-							if(iv.eq.6)temporary1(i,ny,nz)=real(bz0+bzd,4)						
-							
-							if(iv.eq.11-4)temporary1(i,ny,nz)=real(curx(i*istep,j,k),4) !nav
-							if(iv.eq.12-4)temporary1(i,ny,nz)=real(cury(i*istep,j,k),4) !navi
-							
-							if(iv .ge. 14-5) then
-								call interpolcurrent(real(i*istep),real(j),real(k) &
-								,curx0, cury0, curz0)
-								
-								curx0=curx(i*istep,j,k)
-								cury0=cury(i*istep,j,k)
-								curz0=curz(i*istep,j,k)
-								
-							endif
-							
-							!        if(iv.eq.13-4)temporary1(i,ny,nz)=0.
-							if(iv.eq.14-5)temporary1(i,ny,nz)=real(curx0,4)
-							if(iv.eq.15-5)temporary1(i,ny,nz)=real(cury0,4)
-							if(iv.eq.16-5)temporary1(i,ny,nz)=real(curz0,4)
-							
-						enddo
-					enddo
-				enddo
-				
-				if(debug)print *,rank,": before h5dwrite","filespace",filespace(iv &
-				),memspace
-				
-				if(debug)print *,"flds.tot.",ind,rank,"done 3f"
-				
-#ifdef MPI
-					call h5dwrite_real_1(dset_id(iv), H5T_NATIVE_REAL, temporary1(:,: &
-					,:),dimsfi,error,file_space_id = filespace(iv), mem_space_id &
-					=memspace,xfer_prp = h5p_default_f)
-#else
-					call h5dwrite_f(dset_id(iv),H5T_NATIVE_REAL,TEMPORARY1(:,: &
-					,:) ,dimsfi,error)
-#endif      
-				
-				if(debug)print *,"flds.tot.",ind,rank,"done 4f"
-				
-			enddo !ivar
-	
-			if(debug)print *,rank,": after h5dwrite"
-			!
-			! Close dataspaces.
-			!
-	
-#ifdef MPI
-				do iv=1,nvars
-					if(debug)print *, rank, ": ", iv, "closing s"
-					call h5sclose_f(filespace(iv), error)
-				enddo
-				call h5sclose_f(memspace, error)
-#endif
-	
-			!
-			! Close the dataset and property list.
-			!
-			do iv=1,nvars
-				if(debug)print *, rank, ": ", iv, "closing d"
-				call h5dclose_f(dset_id(iv), error)
-			enddo
-#ifdef MPI
-				if(debug)print *, rank, ": ", "closing p"
-				call h5pclose_f(plist_id, error)
-#endif
-			!
-			! Close the file.
-			!
-			if(debug)print *, rank, ": ", "closing f"
-			call h5fclose_f(file_id, error)
-			!
-			! Close FORTRAN predefined datatypes.
-			!
-			if(debug)print *, rank, ": ", "closing h5"
-			call h5close_f(error)
-			
-			if(debug) print *, rank,": finished writing fields"
-			
-			if(debug)print *,"flds.tot.",ind,rank,"done 5f"
-			
-			!-------------------------------------
-			!now write particles
-			
-			!
-			!  Initialize FORTRAN predefined datatypes
-			!
-			call h5open_f(error) 
-			
-			! 
-			! Setup file access property list with parallel I/O access.
-			!
-#ifdef MPI
-				call h5pcreate_f(H5P_FILE_ACCESS_F, plist_id, error)
-				!      call H5Pset_sieve_buf_size_f(plist_id, 262144,error) 
-				!      call H5Pset_alignment_f(plist_id, 524288, 262144,error)
-				call h5pset_fapl_mpio_f(plist_id, mpi_comm_world, &
-				FILE_INFO_TEMPLATE,error)
-#endif
-			if(debug)print *,"flds.tot.",ind,rank,"done 0p"
-			
-			nvars=14+2+2+2
-			midvars=7+1+1+1
-			!      stride=100 !20 !1 !100 !60 !15 !*4
-			dsetname(1)="xi"
-			dsetname(2)="yi"
-			dsetname(3)="zi"
-			dsetname(4)="ui"
-			dsetname(5)="vi"
-			dsetname(6)="wi"
-			dsetname(7)="chi"
-			dsetname(8)="gammai"
-			dsetname(9)="indi"
-			dsetname(10)="proci"
-			dsetname(11)="xe"
-			dsetname(12)="ye"
-			dsetname(13)="ze"
-			dsetname(14)="ue"
-			dsetname(15)="ve"
-			dsetname(16)="we"
-			dsetname(17)="che"
-			dsetname(18)="gammae"
-			dsetname(19)="inde"
-			dsetname(20)="proce"
-			!      dsetname(15)="spectrum"
-			!need to add writing spectrum from root
-			
-			datarank=1
-			!find out number of ions and lecs
-#ifdef MPI
-				tmp1=max(ions,1)
-				call mpi_allgather(tmp1,1,mpi_integer,all_ions,1 &
-				,mpi_integer,mpi_comm_world, error)
-				tmp1=max(lecs,1)
-				call mpi_allgather(tmp1,1,mpi_integer,all_lecs,1,mpi_integer &
-				,mpi_comm_world, error)
-				
-				if(rank.eq.0)print *,"all_ions",all_ions, tmp1 
-				all_ions_lng=all_ions
-				all_lecs_lng=all_lecs
-#else
-				all_ions_lng=ions
-				all_lecs_lng=lecs
-#endif
-			where(all_ions .lt. stride)all_ions=stride
-			where(all_lecs .lt. stride)all_lecs=stride
-			where(all_ions_lng .lt. stride)all_ions_lng=stride
-			where(all_lecs_lng .lt. stride)all_lecs_lng=stride
-			dimsfions(1)=sum(all_ions_lng/stride)
-			dimsflecs(1)=sum(all_lecs_lng/stride)
-			dimsfiions(1)=dimsfions(1)
-			dimsfilecs(1)=dimsflecs(1)
-			dimsfiions(2:7)=0
-			dimsfilecs(2:7)=0
-			if(rank .eq. 0) then 
-				print *, "all_ions", all_ions_lng
-				print *, "all_lecs", all_lecs_lng
-				print *,"dimsions", sum(all_ions_lng/stride)
-				print *,"dimslecs", sum(all_lecs_lng/stride)
-			endif
-			
-			!      allocate(temporary_vec(max(ions/stride,lecs/stride)))
-			allocate(temporary_vec(max(max(ions/stride,lecs/stride),1)))     
-			!
-			! Create the file collectively.
-			! 
-#ifdef MPI
-				call h5fcreate_f(fnameprt, H5F_ACC_TRUNC_F, file_id, error, &
-				access_prp = plist_id)
-				call h5pclose_f(plist_id, error)
-#else
-				call h5fcreate_f(fnameprt, H5F_ACC_TRUNC_F, file_id, error)
-#endif
-			
-			if(debug)print *,"flds.tot.",ind,rank,"done 1p"
-			
-			!
-			! Create the data space for the  dataset. 
-			!
-			
-			do i=1,midvars
-				call h5screate_simple_f(datarank, dimsfions(1), filespace(i), &
-				error)
-			enddo
-			do i=midvars+1,nvars
-				call h5screate_simple_f(datarank, dimsflecs(1), filespace(i), &
-				error)
-			enddo
-			
-			if(debug)print *,"flds.tot.",ind,rank,"done 2p"
-			
-			!
-			! Create the dataset with default properties.
-			!
-			do i=1,nvars
-				call h5dcreate_f(file_id, dsetname(i), H5T_NATIVE_REAL, &
-				filespace(i),dset_id(i), error)
-				call h5sclose_f(filespace(i), error)
-			enddo
-			
-			
-			
-			!
-			! Create property list for collective dataset write
-			!
-#ifdef MPI
-				call h5pcreate_f(H5P_DATASET_XFER_F, plist_id, error) 
-				call h5pset_dxpl_mpio_f(plist_id, H5FD_MPIO_COLLECTIVE_F, error)
-#endif
-	
-			! 
-			! Select hyperslab in the file.
-			!
-			if(debug)print *,"flds.tot.",ind,rank,"done 3p"
-			
-			do i=1,nvars
-				
-				!
-				! Each process defines dataset in memory and writes it to the hyperslab
-				! in the file. 
-				!
-				if(i.le.midvars)countpart = max(ions/stride,1)
-				if(i.gt.midvars)countpart = max(lecs/stride,1)
-				
-				offsetpart = 0
-				if(rank .gt. 0) then 
-					if(i .le. midvars) then
-						offsetpart = sum(all_ions_lng(1:rank)/stride)
-					else
-						offsetpart = sum(all_lecs_lng(1:rank)/stride)
-					endif
-				endif
-				
-#ifdef MPI
-					call h5screate_simple_f(1, countpart, memspace, error) 
-					
-					call h5dget_space_f(dset_id(i), filespace(i), error)
-					
-					call h5sselect_hyperslab_f(filespace(i),H5S_SELECT_SET_F &
-					,offsetpart,countpart, error)
-					
-#endif
-				
-				if(debug)print *,"flds.tot.",ind,rank,"done 4p"
-				!
-				! Write the dataset collectively. 
-				!
-				!      print *,rank,": before h5dwrite" 
-				!      temporary1=temporary_arr(:,:,:,i)
-				!_arr(:,:,:,i)
-				
-				temporary_vec=0.
-				if(i.eq.1) temporary_vec(1:ions/stride)=p(1:ions:stride)%x
-				if(i.eq.2) temporary_vec(1:ions/stride)=p(1:ions:stride)%y &
-				+modulo(rank,sizey)*(myall-5)
-				if(i.eq.3) temporary_vec(1:ions/stride)=p(1:ions:stride)%z+(rank &
-				/sizey)*(mzall-5)
-				
-				if(i.eq.4) temporary_vec(1:ions/stride)=p(1:ions:stride)%u
-				if(i.eq.5) temporary_vec(1:ions/stride)=p(1:ions:stride)%v
-				if(i.eq.6) temporary_vec(1:ions/stride)=p(1:ions:stride)%w
-				!         if(i.eq.7) temporary_vec(1:ions/stride)=sqrt(1./(1.
-				!     &             -(p(1:ions:stride)%u**2+p(1:ions:stride)%v**2
-				!     &             +p(1:ions:stride)%w **2)/c**2))
-				
-				if(i.eq.7) temporary_vec(1:ions/stride)=p(1:ions:stride)%ch
-				if(i.eq.8) temporary_vec(1:ions/stride)=sqrt(1. &
-				+(p(1:ions:stride)%u**2+p(1:ions:stride)%v**2 &
-				+p(1:ions:stride)%w**2))
-				
-				if(i.eq.9) temporary_vec(1:ions/stride)=real(p(1:ions:stride) &
-				%ind,4)
-				
-				!         if(i.eq.9) temporary_vec(1:ions/stride)=real(p(1:ions:stride)
-				!     &             %proc,4)
-				
-				if(i.eq.10) temporary_vec(1:ions/stride)=real(p(1:ions:stride) &
-				%splitlev,4)
-				
-				
-				
-				if(i.eq.11) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-				+lecs:stride)%x
-				if(i.eq.12) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-				+lecs:stride)%y+modulo(rank,sizey)*(myall-5)
-				if(i.eq.13) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-				+lecs:stride)%z+(rank/sizey)*(mzall-5)
-				if(i.eq.14) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-				+lecs:stride)%u
-				if(i.eq.15) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-				+lecs:stride)%v
-				if(i.eq.16) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-				+lecs:stride)%w
-				!         if(i.eq.14) temporary_vec(1:lecs/stride)=sqrt(1./(1. -(p(maxhlf
-				!     &             +1:maxhlf+lecs:stride)%u**2+p(maxhlf+1:maxhlf +lecs:stride
-				!     &             )%v**2+p(maxhlf +1:maxhlf+lecs:stride)%w**2)/c**2))
-				
-				if(i.eq.17) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf+lecs:stride)%ch
-				if(i.eq.18) temporary_vec(1:lecs/stride)=sqrt(1. +(p(maxhlf &
-				+1:maxhlf+lecs:stride)%u**2+p(maxhlf+1:maxhlf +lecs:stride &
-				)%v**2+p(maxhlf +1:maxhlf+lecs:stride)%w**2))
-				
-				if(i.eq.19)temporary_vec(1:lecs/stride)=real(p(maxhlf+1:maxhlf &
-				+lecs:stride)%ind,4)
-				
-				!         if(i.eq.18)temporary_vec(1:lecs/stride)=real(p(maxhlf+1:maxhlf
-				!     &             +lecs:stride)%proc,4)
-				
-				if(i.eq.20)temporary_vec(1:lecs/stride)=real(p(maxhlf+1:maxhlf &
-				+lecs:stride)%splitlev,4)
-				
-				if(debug)print *,"flds.tot.",ind,rank,"done 5p"
-				
-#ifdef MPI
-					if(i .le. midvars) then 
-						call h5dwrite_real_1(dset_id(i), H5T_NATIVE_REAL, &
-						temporary_vec(1:max(ions/stride,1)), dimsfiions,error &
-						,file_space_id = filespace(i), mem_space_id=memspace &
-						,xfer_prp = h5p_default_f)
-					else 
-						call h5dwrite_real_1(dset_id(i), H5T_NATIVE_REAL, &
-						temporary_vec(1:max(lecs/stride,1)), dimsfilecs,error &
-						,file_space_id = filespace(i), mem_space_id=memspace &
-						,xfer_prp = h5p_default_f)
-					endif
-					
-#else
-					if(i .le. midvars) then 
-						call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
-						temporary_vec(1:max(ions/stride,1)), dimsfiions,error)
-					else 
-						call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
-						temporary_vec(1:max(lecs/stride,1)), dimsfilecs,error)
-					endif
-#endif
-	
-#ifdef MPI
-					call h5sclose_f(memspace,error)
-#endif
-			enddo
-			
-			if(debug)print *,"flds.tot.",ind,rank,"done 6p"
-			
-			!
-			! Close dataspaces.
-			!
-#ifdef MPI
-				do i=1,nvars
-					call h5sclose_f(filespace(i), error)
-				enddo
-#endif
-	
-			!
-			! Close the dataset and property list.
-			!
-			do i=1,nvars
-				call h5dclose_f(dset_id(i), error)
-			enddo
-	
-#ifdef MPI
-				call h5pclose_f(plist_id, error)
-#endif
-			!
-			! Close the file.
-			!
-			call h5fclose_f(file_id, error)
-			
-			!
-			! Close FORTRAN predefined datatypes.
-			!
-			call h5close_f(error)
-			
-			if(debug) print *, rank,": finished writing particles"
-			
-			!now write particles
-			!      if(rank.eq.0)then
-			
-			is=1
-			
-			goto 1000
-			
-			write(12)real((ions/is),4),real((lecs/is),4), &
-			real(maxptl,4),real(maxhlf,4), &
-			(real(p(n)%x,4),n=1,(ions/is)*is,is), &
-			(real(p(n)%x,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-			(real(p(n)%y,4),n=1,(ions/is)*is,is), &
-			(real(p(n)%y,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-			(real(p(n)%z,4),n=1,(ions/is)*is,is), &
-			(real(p(n)%z,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-			(real(p(n)%u,4),n=1,(ions/is)*is,is), &
-			(real(p(n)%u,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-			(real(p(n)%v,4),n=1,(ions/is)*is,is), &
-			(real(p(n)%v,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-			(real(p(n)%w,4),n=1,(ions/is)*is,is), &
-			(real(p(n)%w,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is),     &
-			(real(p(n)%ch,4),n=1,(ions/is)*is,is), &
-			(real(p(n)%ch,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is),     &
-			(real(1./sqrt(1.-(p(n)%u**2+p(n)%v**2+p(n)%w**2)/c**2),4),  &
-			n=1,(ions/is)*is,is), &
-			(real(1./sqrt(1.-(p(n)%u**2+p(n)%v**2+p(n)%w**2)/c**2),4),  &
-			n=maxhlf+1,maxhlf+(lecs/is)*is,is)
-			
-			1000 continue
-	
-			deallocate(temporary1, temporary_vec)
-			
-#ifdef MPI
-				call MPI_Info_free(FILE_INFO_TEMPLATE,error)
-#endif
-			
-#else
-			!defining the template for writing
-			!     to be inserted after each instance of h5pcreate_f
-			!     call H5Pset_sieve_buf_size_f(plist_id, 262144,error) 
-			!     call H5Pset_alignment_f(plist_id, 524288, 262144,error)
-			
-#ifdef MPI 
-#ifndef serIO     
-					call MPI_Info_create(FILE_INFO_TEMPLATE,error)
-					!     call MPI_Info_set(FILE_INFO_TEMPLATE, "IBM_largeblock_io", 
-					!     &          "true", error)
-					call MPI_Info_set(FILE_INFO_TEMPLATE, "access_style",  &
-					"write_once",error)
-					call MPI_Info_set(FILE_INFO_TEMPLATE,  &
-					"collective_buffering", "true",error)
-					call MPI_Info_set(FILE_INFO_TEMPLATE, "cb_block_size", &
-					"4194304",error)
-					call MPI_Info_set(FILE_INFO_TEMPLATE, "cb_buffer_size", &
-					"16777216",error)
-					call MPI_Info_set(FILE_INFO_TEMPLATE, "cb_nodes", &
-					"1",error)
-#endif
-#endif
-			
-			!computing my1 and mz1 for each proc
-			if(debug .and. rank .eq. 0) print *, "in output_par"
-			
-			kstart=3
-			kfinish=mz-3
-			if(rank/sizey .eq. 0) kstart=1
-			if(rank/sizey .eq. sizez-1) kfinish=mz
-			
-			110  if(modulo(kstart+(rank/sizey)*(mzall-5)-1*0,istep) .eq. 0) goto 120
-			kstart=kstart+1
-			goto 110
-			120  continue
-			
-			130  if(modulo(kfinish+(rank/sizey)*(mzall-5)-1*0,istep) .eq. 0) goto 140
-			kfinish=kfinish-1
-			goto 130
-			140  continue
-		
-			mz1=(kfinish-kstart)/istep+1
-#ifdef twoD
-				kstart=1
-				kfinish=1
-				mz1=1
-#endif
-			
-			jstart=3
-			jfinish=my-3
-			if(modulo(rank,sizey) .eq. 0) jstart=1
-			if(modulo(rank,sizey) .eq. sizey-1) jfinish=my
-			
-			210  if(modulo(jstart+modulo(rank,sizey)*(myall-5)-1*0,istep) .eq. 0) goto 220
-			jstart=jstart+1
-			goto 210
-			220  continue
-			
-			230  if(modulo(jfinish+modulo(rank,sizey)*(myall-5)-1*0,istep) .eq. 0)  goto 240
-			jfinish=jfinish-1
-			goto 230
-			240  continue
-			
-			my1=(jfinish-jstart)/istep+1
-			
-			!      print *, rank,":","mz1=", mz1, kstart, kfinish, istep,mzall,mz
-			
-			if(debug) print *, rank,"in output b4 allocate"
-			!allocate temporary1 on every processor
-			allocate(temporary1(mx0/istep,my1,mz1))
-			
-			!
-			!  Initialize FORTRAN predefined datatypes
-			!
-#ifdef serIO
-				if (rank .eq. 0) then
-					call h5open_f(error)
-				endif 
-#else
-				call h5open_f(error) 
-#endif
-			
-			! 
-			! Setup file access property list with parallel I/O access.
-			!
-			
-#ifdef MPI
-#ifndef serIO
-					call h5pcreate_f(H5P_FILE_ACCESS_F, plist_id, error)
-					!      call H5Pset_sieve_buf_size_f(plist_id, 262144,error) 
-					!      call H5Pset_alignment_f(plist_id, 524288, 262144,error)
-					call h5pset_fapl_mpio_f(plist_id, mpi_comm_world, &
-					FILE_INFO_TEMPLATE,error)
-#endif
-#endif
-	
-			if(debug)print *,"flds.tot.",ind,rank,"done 0f"
-			
-			!define dsetname
-			if(debug) print *, rank,"h5pset"
-			dsetname(1)="ex"
-			dsetname(2)="ey"
-			dsetname(3)="ez"
-			dsetname(4)="bx"
-			dsetname(5)="by"
-			dsetname(6)="bz"
-			dsetname(7)="ux"
-			dsetname(8)="uy"
-			dsetname(9)="uz"
-			dsetname(10)="Temp"
-			dsetname(11)="dens"
-			dsetname(12)="densi"
-			dsetname(13)="dummy"
-			dsetname(14)="jx"
-			dsetname(15)="jy"
-			dsetname(16)="jz"
-			
-			
-			dsetname(1)="ex"
-			dsetname(2)="ey"
-			dsetname(3)="ez"
-			dsetname(4)="bx"
-			dsetname(5)="by"
-			dsetname(6)="bz"
-			!      dsetname(7)="ux"
-			!      dsetname(8)="uy"
-			!      dsetname(9)="uz"
-			!      dsetname(10)="Temp"
-			dsetname(11-4)="dens"
-			dsetname(12-4)="densi"
-			!      dsetname(13)="dummy"
-			dsetname(14-5)="jx"
-			dsetname(15-5)="jy"
-			dsetname(16-5)="jz"
-			
-			!
-			! Create the file collectively.
-			! 
-#ifdef MPI
-#ifdef serIO
-					if (rank .eq. 0) then
-						call h5fcreate_f(fnamefld, H5F_ACC_TRUNC_F, file_id, error, &
-						h5p_default_f,h5p_default_f)
-					endif
-#else
-					call h5fcreate_f(fnamefld, H5F_ACC_TRUNC_F, file_id, error, &
-					access_prp = plist_id)
-					call h5pclose_f(plist_id, error)
-#endif
-#else
-				call h5fcreate_f(fnamefld, H5F_ACC_TRUNC_F, file_id, error)
-#endif      
-			
-			if(debug)print *,"flds.tot.",ind,rank,"done 1f"
-			
-			! Create the data space for the  dataset. 
-			!
-			
-#ifdef serIO
-				if (rank .eq. 0) then
-					do i=1,nvars
-						call h5screate_simple_f(datarank, dimsf, filespace(i), error)
-					enddo
-				endif
-#else
-				do i=1,nvars
-					call h5screate_simple_f(datarank, dimsf, filespace(i), error)
-				enddo
-#endif
-			
-			!create property list for collective writing
-			
-			if(debug)print *,"flds.tot.",ind,rank,"done 2f"
-			
-			
-			!getting information about the size of temporary1
-#ifdef MPI
-				if(debug) print *, rank,": in output, b4 allgather", my1
-				call mpi_allgather(my1,1,mpi_integer,my1list,1,mpi_integer &
-				,mpi_comm_world, error)
-				if(debug) print *, rank,": in output, b4 allgather", mz1
-				call mpi_allgather(mz1,1,mpi_integer,mz1list,1,mpi_integer &
-				,mpi_comm_world, error) 
-#ifdef serIO       
-					if (rank .eq. 0) then
-						allocate(temporary0(mx0/istep,maxval(my1list), &
-						maxval(mz1list)))
-					endif
-#endif
-#endif
-			
-			if(debug)print *,"flds.tot.",ind,rank,"done 3f"
-			
-			!writing currents (all procs)
-			open(unit=7,file=fenlargeloc, form='unformatted')
-			rewind 7
-			write(7) (((curx(i,j,k),i=1,mx),j=1,my),k=1,mz), &
-			(((cury(i,j,k),i=1,mx),j=1,my),k=1,mz)
-			close(7)
-			
-			if(debug)print *,"flds.tot.",ind,rank,"done 4f"
-			
-			
-			!looping nvars
-			do iv=1,nvars
-				
-				! special things for special choices
-				if(debug)print *,rank,"iv=",iv
-				
-				if(iv .eq. 11-4) call meanq_dens_cur()
-				if(iv .eq. 14-5) then 
-					!     restore currents from file
-					open(unit=7,file=fenlargeloc, form='unformatted')
-					rewind 7
-					if(debug.and.rank.eq.0) print *, rank,":reading back current file"
-					read(7)(((curx(i,j,k),i=1,mx),j=1,my),k=1,mz), &
-					(((cury(i,j,k),i=1,mx),j=1,my),k=1,mz)
-					!     close(7,status='delete')
-					if(debug .and. rank.eq.0)print *, rank,"resetting arrays"           
-				endif
-				
-				
-				!     define temporary1 for every proc
-				do k=kstart, kfinish, istep !1,mz/istep
-					nz=(k-kstart)/istep+1
-					do j=jstart, jfinish,istep !1,my/istep
-						ny=(j-jstart)/istep+1
-						do i=1,mx/istep
-							
-							call interpolfld(real(i*istep),real(j), &
-							real(k),bx0,by0,bz0,ex0,ey0,ez0,bxd, &
-							byd,bzd,exd,eyd,ezd)
-							
-							if(iv.eq.1)temporary1(i,ny,nz)=real(ex0+exd,4)
-							if(iv.eq.2)temporary1(i,ny,nz)=real(ey0+eyd,4)
-							if(iv.eq.3)temporary1(i,ny,nz)=real(ez0+ezd,4)
-							if(iv.eq.4)temporary1(i,ny,nz)=real(bx0+bxd,4)
-							if(iv.eq.5)temporary1(i,ny,nz)=real(by0+byd,4)
-							if(iv.eq.6)temporary1(i,ny,nz)=real(bz0+bzd,4)
-							if(iv.eq.11-4)temporary1(i,ny,nz)= &
-							real(curx(i*istep,j,k),4) !nav
-							if(iv.eq.12-4)temporary1(i,ny,nz)= &
-							real(cury(i*istep,j,k),4) !navi
-							
-							if(iv .ge. 14-5) then
-								call interpolcurrent(real(i*istep),real(j), &
-								real(k),curx0, cury0, curz0)
-								
-								curx0=curx(i*istep,j,k)
-								cury0=cury(i*istep,j,k)
-								curz0=curz(i*istep,j,k)
-								
-							endif
-							
-							!     if(iv.eq.13-4)temporary1(i,ny,nz)=0.
-							if(iv.eq.14-5)temporary1(i,ny,nz)=real(curx0,4)
-							if(iv.eq.15-5)temporary1(i,ny,nz)=real(cury0,4)
-							if(iv.eq.16-5)temporary1(i,ny,nz)=real(curz0,4)                         
-						enddo
-					enddo
-				enddo         
-				
-				
-				!serial writing
-#ifdef serIO
-				if(rank.eq.0)print *, "Serial writing of dataset: ",dsetname(iv)
-					do procn=0,size0-1
-						
-						if (rank .eq. 0) then
-							
-							if (procn .ne. 0) then !receive from procn                                
-#ifdef MPI
-									call MPI_Recv(temporary0,mx0/istep*my1list(procn+1) &
-									*mz1list(procn+1),mpi_real,procn,1, &
-									MPI_COMM_WORLD,status,error)
-#endif
-							else           !procn eq 0
-								temporary0=temporary1               
-							endif
-							
-														
-							!     computing the offset
-							count(1) = dimsf(1)
-							count(2) = my1list(procn+1)   !dimsf(2)
-							count(3) = mz1list(procn+1)
-							
-							offset(1) = 0
-							offset(2) = 0
-							offset(3) = 0
-							!     z offset
-							if(procn/sizey .gt. 0) then 
-								offset(3)=sum(mz1list(1:(procn/sizey)*sizey:sizey))
-								!     print *,rank,":","offset=", offset(3), "count=",count
-							endif
-#ifdef twoD 
-								offset(3)=0
-#endif
-							!     now get the y offset
-							if(modulo(procn,sizey) .gt. 0) then 
-								offset(2)=sum(my1list((procn/sizey)*sizey+1:procn))
-							endif
-							!               if(debug)print *,rank,":","offset=",offset(2),"count=",count
-							
-							
-							!hyperslab selection
-#ifdef MPI
-								! this is necessay only if I close the filespace above      
-								!               call h5dget_space_f(dset_id(iv), filespace(iv), error)               
-								call h5sselect_hyperslab_f(filespace(iv),H5S_SELECT_SET_F &
-								,offset,count,error)
-#endif               
-					
-							if(debug)print *,rank,": selected hyperslab"
-							
-							
-							!memory space
-#ifdef MPI
-								call h5screate_simple_f(datarank, count, memspace, error) 
-#endif
-							
-							
-							!dataset creation/opening
-							if (procn .eq. 0) then
-								call h5dcreate_f(file_id,dsetname(iv),H5T_NATIVE_REAL, &
-								filespace(iv),dset_id(iv), error)
-							else 
-								call h5dopen_f(file_id,dsetname(iv),dset_id(iv),error)
-							endif
-							
-							
-							!writing
-							if(debug)print *,rank,": before h5dwrite","filespace", &
-							filespace(iv),"memspace",memspace
-							
-#ifdef MPI
-								call h5dwrite_f(dset_id(iv), H5T_NATIVE_REAL,  &
-								temporary0(:,:,:),dimsfi,error,mem_space_id= &
-								memspace,file_space_id = filespace(iv))
-								!               call h5dwrite_real_1(dset_id(iv), H5T_NATIVE_REAL, 
-								!     &                   temporary0(:,:,:),dimsfi,error,file_space_id = 
-								!     &                   filespace(iv), mem_space_id=memspace)
-#else
-								call h5dwrite_f(dset_id(iv),H5T_NATIVE_REAL, &
-								temporary(:,:,:) ,dimsfi,error)
-#endif 
-							
-							
-							!closing dataset and memory space
-							if(debug)print *, rank, ": ", iv, "closing d"
-							call h5dclose_f(dset_id(iv), error)
-							if(debug)print *, rank, ": ", iv, "closing m"
-							call h5sclose_f(memspace, error)
-							
-						else !rank ne 0
-					
-							if (procn .eq. rank) then
-#ifdef MPI
-									call MPI_Send(temporary1,mx0/istep*my1 &
-									*mz1,mpi_real,0,1, &
-									MPI_COMM_WORLD,error) 
-#endif             
-							endif
-						endif !rank ne 0
-						
-					enddo!procn
-					
-#endif        
-				
-				!closing dataspace    
-				if(debug)print *, rank, ": ", iv, "closing s" 
-#ifdef serIO    
-					if (rank .eq. 0) then
-						call h5sclose_f(filespace(iv), error)
-					endif
-#else
-					call h5sclose_f(filespace(iv), error)
-#endif
-	
-			enddo!nvars
-			
-			!closing property list for collective writing
-			!#ifdef MPI
-			!      if(debug)print *, rank, ": ", "closing p"
-			!      call h5pclose_f(plist_id, error)
-			!#endif
-			
-			
-#ifdef serIO
-				if (rank .eq. 0) then
-					if(debug)print *, rank, ": ", "closing f"
-					call h5fclose_f(file_id, error)
-					if(debug)print *, rank, ": ", "closing h5"
-					call h5close_f(error)
-					deallocate(temporary0)
-				endif
-#else
-				if(debug)print *, rank, ": ", "closing f"
-				call h5fclose_f(file_id, error)
-				if(debug)print *, rank, ": ", "closing h5"
-				call h5close_f(error)
-#endif
-			
-			if(debug) print *, rank,": finished writing fields"
-			
-			if(debug)print *,"flds.tot.",ind,rank,"done 5f"
-			
-			deallocate(temporary1)
-			
-			!      goto 127
-			
-			!-------------------------------------
-			!now write particles
-			
-			!  Initialize FORTRAN predefined datatypes
-			!
-#ifdef serIO
-				if (rank .eq. 0) then
-					call h5open_f(error)
-				endif 
-#else
-				call h5open_f(error) 
-#endif
-			
-			! 
-			! Setup file access property list with parallel I/O access.
-			!
-			
-#ifdef MPI
-#ifndef serIO
-					call h5pcreate_f(H5P_FILE_ACCESS_F, plist_id, error)
-					!      call H5Pset_sieve_buf_size_f(plist_id, 262144,error) 
-					!      call H5Pset_alignment_f(plist_id, 524288, 262144,error)
-					call h5pset_fapl_mpio_f(plist_id, mpi_comm_world, &
-					FILE_INFO_TEMPLATE,error)
-#endif
-#endif
-			if(debug)print *,"prtl.tot.",ind,rank,"done 0p"
-			
-			!define dsetname
-			nvars=14+2+2+2
-			midvars=7+1+1+1
-			!      stride=100 !20 !1 !100 !60 !15 !*4
-			dsetname(1)="xi"
-			dsetname(2)="yi"
-			dsetname(3)="zi"
-			dsetname(4)="ui"
-			dsetname(5)="vi"
-			dsetname(6)="wi"
-			dsetname(7)="chi"
-			dsetname(8)="gammai"
-			dsetname(9)="indi"
-			dsetname(10)="proci"
-			dsetname(11)="xe"
-			dsetname(12)="ye"
-			dsetname(13)="ze"
-			dsetname(14)="ue"
-			dsetname(15)="ve"
-			dsetname(16)="we"
-			dsetname(17)="che"
-			dsetname(18)="gammae"
-			dsetname(19)="inde"
-			dsetname(20)="proce"
-			!      dsetname(15)="spectrum"
-			!need to add writing spectrum from root
-			
-			!find out number of ions and lecs
-			datarank=1
-	
-#ifdef MPI
-				tmp1=max(ions,1)
-				call mpi_allgather(tmp1,1,mpi_integer,all_ions,1 &
-				,mpi_integer,mpi_comm_world, error)
-				tmp1=max(lecs,1)
-				call mpi_allgather(tmp1,1,mpi_integer,all_lecs,1, &
-				mpi_integer,mpi_comm_world, error)
-				
-				if(rank.eq.0)print *,"all_ions",all_ions, tmp1 
-				all_ions_lng=all_ions
-				all_lecs_lng=all_lecs
-#else
-				all_ions_lng=ions
-				all_lecs_lng=lecs
-#endif
-			
-			where(all_ions .lt. stride)all_ions=stride
-			where(all_lecs .lt. stride)all_lecs=stride
-			where(all_ions_lng .lt. stride)all_ions_lng=stride
-			where(all_lecs_lng .lt. stride)all_lecs_lng=stride
-			dimsfions(1)=sum(all_ions_lng/stride)
-			dimsflecs(1)=sum(all_lecs_lng/stride)
-			dimsfiions(1)=dimsfions(1)
-			dimsfilecs(1)=dimsflecs(1)
-			dimsfiions(2:7)=0
-			dimsfilecs(2:7)=0
-			if(rank .eq. 0) then 
-				print *, "all_ions", all_ions_lng
-				print *, "all_lecs", all_lecs_lng
-				print *,"dimsions", sum(all_ions_lng/stride)
-				print *,"dimslecs", sum(all_lecs_lng/stride)
-			endif
-			
-			!      allocate(temporary_vec(max(ions/stride,lecs/stride)))
-			allocate(temporary_vec(max(max(ions/stride,lecs/stride),1)))     
-			
-#ifdef serIO
-				if (rank .eq. 0) then
-					allocate(temporary0_vec(max(maxval(all_ions_lng/stride), &
-					maxval(all_lecs_lng/stride))))
-				endif
-#endif
-			
-			! Create the file collectively.
-			! 
-#ifdef MPI
-#ifdef serIO
-					if (rank .eq. 0) then
-						call h5fcreate_f(fnameprt, H5F_ACC_TRUNC_F, file_id, error, &
-						h5p_default_f,h5p_default_f)
-					endif
-#else
-					call h5fcreate_f(fnameprt, H5F_ACC_TRUNC_F, file_id, error, &
-					access_prp = plist_id)
-					call h5pclose_f(plist_id, error)
-#endif
-#else
-				call h5fcreate_f(fnameprt, H5F_ACC_TRUNC_F, file_id, error)
-#endif      
-			
-			if(debug)print *,"prtl.tot.",ind,rank,"done 1p"
-			
-			
-			!
-			! Create the data space for the  dataset. 
-			!
-			
-#ifdef serIO
-				if (rank .eq. 0) then
-					do i=1,midvars
-						call h5screate_simple_f(datarank, dimsfions(1), filespace(i), &
-						error)
-					enddo
-					do i=midvars+1,nvars
-						call h5screate_simple_f(datarank, dimsflecs(1), filespace(i), &
-						error)
-					enddo
-				endif
-#else
-				do i=1,midvars
-					call h5screate_simple_f(datarank, dimsfions(1), filespace(i), &
-					error)
-				enddo
-				do i=midvars+1,nvars
-					call h5screate_simple_f(datarank, dimsflecs(1), filespace(i), &
-					error)
-				enddo
-#endif
-			
-			if(debug)print *,"prtl.tot.",ind,rank,"done 2p"
-			
-			!
-			! Create property list for collective dataset write
-			!
-			!#ifdef MPI
-			!      call h5pcreate_f(H5P_DATASET_XFER_F, plist_id, error) 
-			!      call h5pset_dxpl_mpio_f(plist_id, H5FD_MPIO_COLLECTIVE_F, error)
-			!#endif
-			! 
-			
-			if(debug)print *,"prtl.tot.",ind,rank,"done 3p"
-			
-			
-			!looping nvars
-			do i=1,nvars
-				
-				!     define temporary_vec for every proc
-			   temporary_vec=0.
-				if(i.eq.1) temporary_vec(1:ions/stride)=p(1:ions:stride)%x
-				if(i.eq.2) temporary_vec(1:ions/stride)=p(1:ions:stride)%y &
-				+modulo(rank,sizey)*(myall-5)
-				if(i.eq.3)temporary_vec(1:ions/stride)=p(1:ions:stride)%z+(rank &
-				/sizey)*(mzall-5)
-				
-				if(i.eq.4) temporary_vec(1:ions/stride)=p(1:ions:stride)%u
-				if(i.eq.5) temporary_vec(1:ions/stride)=p(1:ions:stride)%v
-				if(i.eq.6) temporary_vec(1:ions/stride)=p(1:ions:stride)%w
-				!     if(i.eq.7) temporary_vec(1:ions/stride)=sqrt(1./(1.
-				!     &             -(p(1:ions:stride)%u**2+p(1:ions:stride)%v**2
-				!     &             +p(1:ions:stride)%w **2)/c**2))
-				
-				if(i.eq.7) temporary_vec(1:ions/stride)=p(1:ions:stride)%ch
-				if(i.eq.8) temporary_vec(1:ions/stride)=sqrt(1. &
-				+(p(1:ions:stride)%u**2+p(1:ions:stride)%v**2 &
-				+p(1:ions:stride)%w**2))
-				
-				if(i.eq.9) temporary_vec(1:ions/stride)=real(p(1:ions:stride) &
-				%ind,4)
-				
-				!     if(i.eq.9) temporary_vec(1:ions/stride)=real(p(1:ions:stride)
-				!     &             %proc,4)
-				
-				if(i.eq.10) temporary_vec(1:ions/stride)=real(p(1:ions:stride) &
-				%splitlev,4)
-				
-				if(i.eq.11) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-				+lecs:stride)%x
-				if(i.eq.12) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-				+lecs:stride)%y+modulo(rank,sizey)*(myall-5)
-				if(i.eq.13) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-				+lecs:stride)%z+(rank/sizey)*(mzall-5)
-				if(i.eq.14) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-				+lecs:stride)%u
-				if(i.eq.15) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-				+lecs:stride)%v
-				if(i.eq.16) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-				+lecs:stride)%w
-				!     if(i.eq.14) temporary_vec(1:lecs/stride)=sqrt(1./(1. -(p(maxhlf
-				!     &             +1:maxhlf+lecs:stride)%u**2+p(maxhlf+1:maxhlf +lecs:stride
-				!     &             )%v**2+p(maxhlf +1:maxhlf+lecs:stride)%w**2)/c**2))
-				
-				if(i.eq.17) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf+lecs:stride)%ch
-				if(i.eq.18) temporary_vec(1:lecs/stride)=sqrt(1. +(p(maxhlf &
-				+1:maxhlf+lecs:stride)%u**2+p(maxhlf+1:maxhlf +lecs:stride &
-				)%v**2+p(maxhlf +1:maxhlf+lecs:stride)%w**2))
-				
-				if(i.eq.19)temporary_vec(1:lecs/stride)=real(p(maxhlf+1:maxhlf &
-				+lecs:stride)%ind,4)
-				
-				!     if(i.eq.18)temporary_vec(1:lecs/stride)=real(p(maxhlf+1:maxhlf
-				!     &             +lecs:stride)%proc,4)
-				
-				if(i.eq.20)temporary_vec(1:lecs/stride)=real(p(maxhlf+1:maxhlf &
-				+lecs:stride)%splitlev,4)
-				
-
-				!serial writing
-#ifdef serIO
-				if(rank.eq.0)print *, "Serial writing of dataset: ",dsetname(i)
-							
-
-					do procn=0,size0-1
-						
-						if (rank .eq. 0) then
-							
-							if (procn .ne. 0) then !receive from procn                                
-#ifdef MPI
-									if(i .le. midvars) then
-										call MPI_Recv(temporary0_vec,all_ions_lng(procn+1)/ &
-										stride,mpi_real,procn,1, &
-										MPI_COMM_WORLD,status,error)
-									else
-										call MPI_Recv(temporary0_vec,all_lecs_lng(procn+1)/ &
-										stride,mpi_real,procn,1, &
-										MPI_COMM_WORLD,status,error)
-									endif
-#endif
-							else           !procn eq 0
-								temporary0_vec=temporary_vec               
-							endif
-							
-							
-							!define count and offset
-							if(i.le.midvars)countpart = max(all_ions_lng(procn+1)/ &
-							stride,1)
-							if(i.gt.midvars)countpart = max(all_lecs_lng(procn+1)/ &
-							stride,1)
-							
-							offsetpart = 0
-							if(procn .gt. 0) then 
-								if(i .le. midvars) then
-									offsetpart = sum(all_ions_lng(1:procn)/stride)
-								else
-									offsetpart = sum(all_lecs_lng(1:procn)/stride)
-								endif
-							endif
-							
-							
-							!hyperslab selection
-#ifdef MPI
-								! this is necessary only if I close the filespace above      
-								!               call h5dget_space_f(dset_id(i), filespace(i), error)               
-								call h5sselect_hyperslab_f(filespace(i),H5S_SELECT_SET_F &
-								,offsetpart,countpart,error)
-#endif               
-					
-							if(debug)print *,rank,": selected hyperslab"
-							
-							
-							!memory space
-#ifdef MPI
-								call h5screate_simple_f(1, countpart, memspace, error) 
-#endif
-							
-							
-							!dataset creation/opening
-							if (procn .eq. 0) then
-								call h5dcreate_f(file_id,dsetname(i),H5T_NATIVE_REAL, &
-								filespace(i),dset_id(i), error)
-							else 
-								call h5dopen_f(file_id,dsetname(i),dset_id(i),error)
-							endif
-							
-							
-							!writing
-#ifdef MPI
-								if(i .le. midvars) then 
-									call h5dwrite_real_1(dset_id(i), H5T_NATIVE_REAL, &
-									temporary0_vec(1:all_ions_lng(procn+1)/stride),  &
-									dimsfiions,error,file_space_id = filespace(i),  &
-									mem_space_id=memspace)
-								else 
-									call h5dwrite_real_1(dset_id(i), H5T_NATIVE_REAL, &
-									temporary0_vec(1:all_lecs_lng(procn+1)/stride),  &
-									dimsfilecs,error,file_space_id = filespace(i),  &
-									mem_space_id=memspace)
-								endif
-								
-#else
-								if(i .le. midvars) then 
-									call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
-									temporary_vec(1:max(ions/stride,1)),  &
-									dimsfiions,error)
-								else 
-									call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
-									temporary_vec(1:max(lecs/stride,1)),  &
-									dimsfilecs,error)
-								endif
-#endif
-							
-							
-							!closing dataset and memory space
-							if(debug)print *, rank, ": ", i, "closing d"
-							call h5dclose_f(dset_id(i), error)
-							if(debug)print *, rank, ": ", i, "closing m"
-							call h5sclose_f(memspace, error)
-						
-						else !rank ne 0
-							if (procn .eq. rank) then
-#ifdef MPI
-									if(i .le. midvars) then
-										call MPI_Send(temporary_vec,all_ions_lng(procn+1)/ &
-										stride,mpi_real,0,1, &
-										MPI_COMM_WORLD,error)
-									else
-										call MPI_Send(temporary_vec,all_lecs_lng(procn+1)/ &
-										stride,mpi_real,0,1, &
-										MPI_COMM_WORLD,error)
-									endif
-#endif       
-							endif
-						endif               !rank ne 0
-						
-					enddo!procn
-					
-#endif
-				
-				if(debug)print *, rank, ": ", i, "closing s" 
-#ifdef serIO    
-					if (rank .eq. 0) then
-						call h5sclose_f(filespace(i), error)
-					endif
-#else
-					call h5sclose_f(filespace(i), error)
-#endif
-				
-			enddo!nvars
-			
-#ifdef serIO
-				if (rank .eq. 0) then
-					if(debug)print *, rank, ": ", "closing f"
-					call h5fclose_f(file_id, error)
-					if(debug)print *, rank, ": ", "closing h5"
-					call h5close_f(error)
-					deallocate(temporary0_vec)
-				endif
-#else
-				if(debug)print *, rank, ": ", "closing f"
-				call h5fclose_f(file_id, error)
-				if(debug)print *, rank, ": ", "closing h5"
-				call h5close_f(error)
-#endif
-			
-			if(debug) print *, rank,": finished writing particles"
-			
-			if(debug)print *,"prtl.tot.",ind,rank,"done 4p"
-			
-			
-			
-			!#ifdef MPI
-			!      call h5pclose_f(plist_id, error)
-			!#endif
-			
-			
-			is=1
-			
-			goto 1000
-			
-			write(12)real((ions/is),4),real((lecs/is),4), &
-			real(maxptl,4),real(maxhlf,4), &
-			(real(p(n)%x,4),n=1,(ions/is)*is,is), &
-			(real(p(n)%x,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-			(real(p(n)%y,4),n=1,(ions/is)*is,is), &
-			(real(p(n)%y,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-			(real(p(n)%z,4),n=1,(ions/is)*is,is), &
-			(real(p(n)%z,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-			(real(p(n)%u,4),n=1,(ions/is)*is,is), &
-			(real(p(n)%u,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-			(real(p(n)%v,4),n=1,(ions/is)*is,is), &
-			(real(p(n)%v,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-			(real(p(n)%w,4),n=1,(ions/is)*is,is), &
-			(real(p(n)%w,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is),     &
-			(real(p(n)%ch,4),n=1,(ions/is)*is,is), &
-			(real(p(n)%ch,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is),     &
-			(real(1./sqrt(1.-(p(n)%u**2+p(n)%v**2+p(n)%w**2)/c**2),4),  &
-			n=1,(ions/is)*is,is), &
-			(real(1./sqrt(1.-(p(n)%u**2+p(n)%v**2+p(n)%w**2)/c**2),4),  &
-			n=maxhlf+1,maxhlf+(lecs/is)*is,is)
-			
-			1000 continue
-			
-			deallocate(temporary_vec)
-			
-			127  continue
-			
-#ifdef MPI
-#ifndef serIO
-					call MPI_Info_free(FILE_INFO_TEMPLATE,error)
-#endif
-#endif
-	
-#endif
-	
-		!       call save_spectrum()
-		
-		
-		!don't need families -- can use h5repart
-		!!!#include "output_par_lessmem.family.f"
-		!saving the huge dump
-		
-		!      include "output_par.f"
-		
-		
-		!save parameter file
-		!          goto 608
-		fparam="output/param."//trim(indchar)
-		
-		if(rank .eq. 0) then 
-			open(unit=12,file=fparam,form='unformatted')
-			close(12,status='delete')
-			call h5open_f (error)
-			call h5fcreate_f(fparam, H5F_ACC_TRUNC_F, file_id, error)
-			datarank=1
-			dimsf(1)=1
-			
-			!first pack them into an array
-			intdata(1)=int(mx0)
-			intdata(2)=my0
-			intdata(3)=mz0
-			intdata(4)=caseinit
-			intdata(5)=interval
-			intdata(6)=torqint
-			intdata(7)=pltstart
-			intdata(8)=istep
-			intdata(9)=istep1
-			intdata(10)=stride
-			intdata(11)=ntimes
-			intdata(12)=0
-			if(cooling) intdata(12)=1
-			intdata(13)=splitratio
-			
-			realdata(1)=c
-			realdata(2)=sigma
-			realdata(3)=c_omp
-			realdata(4)=gamma0
-			realdata(5)=delgam
-			realdata(6)=ppc0
-			realdata(7)=me
-			realdata(8)=mi
-			realdata(9)=dummyvar
-			realdata(10)=acool
-			realdata(11)=lap*(c/c_omp)
-			realdata(12)=qi
-			
-			dsetnamei(1)="mx0"
-			dsetnamei(2)="my0"
-			dsetnamei(3)="mz0"
-			dsetnamei(4)="caseinit"
-			dsetnamei(5)="interval"
-			dsetnamei(6)="torqint"
-			dsetnamei(7)="pltstart"
-			dsetnamei(8)="istep"
-			dsetnamei(9)="istep1"
-			dsetnamei(10)="stride"
-			dsetnamei(11)="ntimes"
-			dsetnamei(12)="cooling"
-			dsetnamei(13)="splitratio"
-			
-			dsetnamer(1)="c"
-			dsetnamer(2)="sigma"
-			dsetnamer(3)="c_omp"
-			dsetnamer(4)="gamma0"
-			dsetnamer(5)="delgam"
-			dsetnamer(6)="ppc0"
-			dsetnamer(7)="me"
-			dsetnamer(8)="mi"
-			dsetnamer(9)="dummy"
-			dsetnamer(10)="acool"
-			dsetnamer(11)="time"
-			dsetnamer(12)="qi"
-
-			do i=1,13 
-				if(debug)print *, rank,": dataseti ",i
-				call h5screate_simple_f(datarank, dimsf, filespace(1), &
-				error)
-				call h5dcreate_f(file_id, dsetnamei(i), H5T_NATIVE_INTEGER, &
-				filespace(1),dset_id(1), error)
-				call h5dwrite_integer_1(dset_id(1),H5T_NATIVE_INTEGER &
-				,intdata(i),dimsf,error)
-				call h5dclose_f(dset_id(1), error)
-				call h5sclose_f(filespace(1), error)
-			enddo
-			
-			do i=1,12
-				if(debug)print *,rank, ": datasetr ",i
-				call h5screate_simple_f(datarank, dimsf, filespace(1), &
-				error)
-				call h5dcreate_f(file_id, dsetnamer(i), H5T_NATIVE_REAL, &
-				filespace(1),dset_id(1), error)
-				call h5dwrite_real_1(dset_id(1),H5T_NATIVE_REAL,realdata(i) &
-				,dimsf,error)
-				call h5dclose_f(dset_id(1), error)
-				call h5sclose_f(filespace(1), error)
-			enddo
-			
-			call h5fclose_f(file_id,error)
-			call h5close_f(error)
-			
-		endif
-		608      continue
-		
-		
-		
-		
-	endif !if lap ge pltstart
-	
-	
-	!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-	istep0=istep
-	
-	if(lap.ge.pltstart.and.modulo((lap-pltstart),torqint).eq.0) then
-
-	istep=istep1
-	
-	dimsf(1)=mx0/istep
-	dimsf(2)=my0/istep
-#ifndef twoD
-		dimsf(3)=mz0/istep
-#else
-		dimsf(3)=1
-#endif 
-	dimsfi(1:3)=dimsf(1:3)
-	dimsfi(4:7)=0
-	datarank=3
-	
-	nvars=16
-	
-	
-	ind=(lap-pltstart)/torqint
-	
-	!          write(fnamefld,"(a16,i3.3)") "output/fl%d.tot.",ind
-	
-	write(indchar,"(i3.3)")ind
-	
-	print *, rank," writing dimsf", dimsf
-	write(fnamefld,"(a16,i3.3)") "output/flds.hug.",ind
-	
-	!       fnamefld=
-	!    &     "/scratch/pvfs2/anatoly/output.mime1.2d.2048.ppc64.sig0/"//
-	!    &     "flds.hug."//trim(indchar)
-	
-	!       write(fnameprt,"(a16,i3.3)") "output/prtl.hug.",ind
-	
-	if(rank.eq.0)write(*,*) rank,": Writing Huge ",fnamefld, '  ',fnameprt
-	
-	if(rank .eq. 0) then 
-		open(unit=11,file=fnamefld,form='unformatted')
-		close(11,status='delete')
-		!             open(unit=11,file=fnamefld,form='unformatted')
-		!       open(unit=12,file=fnameprt,form='unformatted')
-		!       close(12,status='delete')
-	endif
-	
-	call MPI_BARRIER(MPI_COMM_WORLD,ierr)
-	
-	!!!
-	!!! THIS CODE WAS ON OUTPUT_PAR_LESSMEM.HUG
-	!!!
-	
-	
-	
-	
-	
-	
-	if(debug .and. rank .eq. 0) print *, "in output_par"
-	
-	kstart=3
-	kfinish=mz-3
-	if(rank/sizey .eq. 0) kstart=1
-	if(rank/sizey .eq. sizez-1) kfinish=mz
-	
-	
-	1110  if(modulo(kstart+(rank/sizey)*(mzall-5)-1*0,istep) .eq. 0) goto &
-	1120
-	kstart=kstart+1
-	goto 1110
-	1120  continue
-	
-	1130  if(modulo(kfinish+(rank/sizey)*(mzall-5)-1*0,istep) .eq. 0) goto &
-	1140
-	kfinish=kfinish-1
-	goto 1130
-	1140  continue
-	mz1=(kfinish-kstart)/istep+1
-#ifdef twoD
-		kstart=1
-		kfinish=1
-		mz1=1
-#endif
-	
-	jstart=3
-	jfinish=my-3
-	if(modulo(rank,sizey) .eq. 0) jstart=1
-	if(modulo(rank,sizey) .eq. sizey-1) jfinish=my
-	
-	
-	1210  if(modulo(jstart+modulo(rank,sizey)*(myall-5)-1*0,istep) .eq. 0) &
-	goto 1220
-	jstart=jstart+1
-	goto 1210
-	1220  continue
-	
-	1230  if(modulo(jfinish+modulo(rank,sizey)*(myall-5)-1*0,istep) .eq. 0)  &
-	goto 1240
-	jfinish=jfinish-1
-	goto 1230
-	1240  continue
-	
-	my1=(jfinish-jstart)/istep+1
-	
-	!      print *, rank,":","mz1=", mz1, kstart, kfinish, istep,mzall,mz
-	
-	if(Rank.eq.0)print *, rank, ":", "size of temp", mx0/istep, my1, mz1
-	
-	allocate( temporary1(mx0/istep,my1,mz1))
-	
-	!
-	!  Initialize FORTRAN predefined datatypes
-	!
-	call h5open_f(error) 
-	
-	! 
-	! Setup file access property list with parallel I/O access.
-	!
-#ifdef MPI
-		call h5pcreate_f(H5P_FILE_ACCESS_F, plist_id, error)
-		call h5pset_fapl_mpio_f(plist_id, mpi_comm_world, mpi_info_null, &
-		error)
-#endif
-
-	dsetname(1)="ex"
-	dsetname(2)="ey"
-	dsetname(3)="ez"
-	dsetname(4)="bx"
-	dsetname(5)="by"
-	dsetname(6)="bz"
-	dsetname(7)="ux"
-	dsetname(8)="uy"
-	dsetname(9)="uz"
-	dsetname(10)="Temp"
-	dsetname(11)="dens"
-	dsetname(12)="densi"
-	dsetname(13)="dummy"
-	dsetname(14)="jx"
-	dsetname(15)="jy"
-	dsetname(16)="jz"
-	
-	
-	dsetname(1)="ex"
-	dsetname(2)="ey"
-	dsetname(3)="ez"
-	dsetname(4)="bx"
-	dsetname(5)="by"
-	dsetname(6)="bz"
-	!      dsetname(7)="ux"
-	!      dsetname(8)="uy"
-	!      dsetname(9)="uz"
-	!      dsetname(10)="Temp"
-	dsetname(11-4)="dens"
-	dsetname(12-4)="densi"
-	!      dsetname(13)="dummy"
-	dsetname(14-5)="jx"
-	dsetname(15-5)="jy"
-	dsetname(16-5)="jz"
-	
-	!
-	! Create the file collectively.
-	! 
-#ifdef MPI
-		call h5fcreate_f(fnamefld, H5F_ACC_TRUNC_F, file_id, error, &
-		access_prp = plist_id)
-		call h5pclose_f(plist_id, error)
-#else
-		call h5fcreate_f(fnamefld, H5F_ACC_TRUNC_F, file_id, error)
-#endif
-	!
-	! Create the data space for the  dataset. 
-	
-	!determine the fluid variables I want to save
-	dsetsav=0
-#ifdef twoD
-		if (sigma .eq. 0.) then 
-			dsetsav(1:4)=[1,2,6,7]
-		else
-			dsetsav(1:8)=[1,2,3,4,5,6,7,8]
-		endif
-#else
-		dsetsav(1:8)=[1,2,3,4,5,6,7,8]
-#endif
-	dsetbool=0
-	dsetbool(dsetsav)=1
-	!
-	do i=1,nvars
-		if (dsetbool(i) .eq. 1) then 
-			call h5screate_simple_f(datarank, dimsf, filespace(i), error)
-		endif
-	enddo
-	!      print *,rank, ": filespace=",filespace
-	
-	!
-	! Create the dataset with default properties.
-	!
-	do i=1,nvars
-		if (dsetbool(i) .eq. 1) then 
-			call h5dcreate_f(file_id, dsetname(i), H5T_NATIVE_REAL, &
-			filespace(i),dset_id(i), error)
-			call h5sclose_f(filespace(i), error)
-		endif
-	enddo
-	
-	!
-	! Each process defines dataset in memory and writes it to the hyperslab
-	! in the file. 
-	!
-	count(1) = dimsf(1)
-	count(2) = my1 !dimsf(2)
-	count(3) = mz1
-	
-	!need to communicate with others to find out the offset
-#ifdef MPI
-		call mpi_allgather(mz1,1,mpi_integer,all_counts,1,mpi_integer &
-		,mpi_comm_world, error)
-#endif
-	if(debug .and. rank .eq. 0) print *, "allcounts mz1=",all_counts
-	offset(1) = 0
-	offset(2) = 0
-	offset(3) = 0
-	!z offset
-	if(rank/sizey .gt. 0) then 
-			offset(3) = sum(all_counts(1:(rank/sizey)*sizey:sizey))
-			!      print *,rank,":","offset=", offset(3), "count=",count
-		endif
-#ifdef twoD 
-			offset(3)=0
-#endif
-		!now get the y offset
-#ifdef MPI
-			call mpi_allgather(my1,1,mpi_integer,all_counts,1,mpi_integer &
-			,mpi_comm_world, error)
-#endif
-		if(modulo(rank,sizey) .gt. 0) then 
-			
-			offset(2)=sum(all_counts((rank/sizey)*sizey+1:rank))
-		endif
-		if(debug)print *,rank,":","offset=",offset(2),"count=",count
-#ifdef MPI
-			call h5screate_simple_f(datarank, count, memspace, error) 
-#endif
-		!
-		! Create property list for collective dataset write
-		!
-#ifdef MPI
-			call h5pcreate_f(H5P_DATASET_XFER_F, plist_id, error) 
-			call h5pset_dxpl_mpio_f(plist_id, H5FD_MPIO_COLLECTIVE_F, error)
-#endif
-		! 
-		! Select hyperslab in the file.
-		!
-		
-		open(unit=7,file=fenlargeloc, form='unformatted')
-		rewind 7
-		write(7) (((curx(i,j,k),i=1,mx),j=1,my),k=1,mz), &
-		(((cury(i,j,k),i=1,mx),j=1,my),k=1,mz)
-		close(7)
-	
-		do iv=1,nvars
-			if(debug)print *,rank,"iv=",iv
-			
-			if(iv .eq. 11-4) call meanq_dens_cur()
-			if(iv .eq. 14-5) then 
-				!restore currents from file
-				open(unit=7,file=fenlargeloc, form='unformatted')
-				rewind 7
-				if(debug .and. rank.eq.0) print *, rank,": reading back current file"
-				read(7)(((curx(i,j,k),i=1,mx),j=1,my),k=1,mz), &
-				(((cury(i,j,k),i=1,mx),j=1,my),k=1,mz)
-				close(7,status='delete')
-				if(debug .and. rank.eq.0) print *, rank,": resetting arrays"
-				
-			endif
-			
-#ifdef MPI      
-				
-				if (dsetbool(iv) .eq. 1) then 
-					
-					call h5dget_space_f(dset_id(iv), filespace(iv), error)
-					
-					call h5sselect_hyperslab_f(filespace(iv),H5S_SELECT_SET_F,offset &
-					,count, error)
-				endif
-#endif
-			
-			if(debug)print *,rank,": selected hyperslab"
-			!
-			! Write the dataset collectively. 
-			!
-			!      print *,rank,": before h5dwrite" 
-			!      temporary1=temporary_arr(:,:,:,iv)
-			!_arr(:,:,:,iv)
-			
-			do k=kstart, kfinish, istep !1,mz/istep
-				nz=(k-kstart)/istep+1
-				do j=jstart, jfinish,istep !1,my/istep
-					ny=(j-jstart)/istep+1
-					do i=1,mx/istep
-						
-						call interpolfld(real(i*istep),real(j),real(k),bx0 &
-						,by0,bz0,ex0,ey0,ez0,bxd,byd,bzd,exd,eyd,ezd)
-						
-						if(iv.eq.1)temporary1(i,ny,nz)=real(ex0+exd,4)
-						if(iv.eq.2)temporary1(i,ny,nz)=real(ey0+eyd,4)
-						if(iv.eq.3)temporary1(i,ny,nz)=real(ez0+ezd,4)
-						if(iv.eq.4)temporary1(i,ny,nz)=real(bx0+bxd,4)
-						if(iv.eq.5)temporary1(i,ny,nz)=real(by0+byd,4)
-						if(iv.eq.6)temporary1(i,ny,nz)=real(bz0+bzd,4)
-						
-						
-						if(iv.eq.11-4)temporary1(i,ny,nz)=real(curx(i*istep,j,k),4) !nav
-						if(iv.eq.12-4)temporary1(i,ny,nz)=real(cury(i*istep,j,k),4) !navi
-						
-						if(iv .ge. 14-5) then
-							call interpolcurrent(real(i*istep),real(j),real(k) &
-							,curx0, cury0, curz0)
-						endif
-						
-						!        if(iv.eq.13-4)temporary1(i,ny,nz)=0.
-						if(iv.eq.14-5)temporary1(i,ny,nz)=real(curx0,4)
-						if(iv.eq.15-5)temporary1(i,ny,nz)=real(cury0,4)
-						if(iv.eq.16-5)temporary1(i,ny,nz)=real(curz0,4)
-						
-					enddo
-				enddo
-			enddo
-			
-			if(debug)print *,rank,": before h5dwrite","filespace",filespace(iv &
-			),memspace
-			
-#ifdef MPI
-				
-				if (dsetbool(iv) .eq. 1) then 
-					
-					call h5dwrite_real_1(dset_id(iv), H5T_NATIVE_REAL, temporary1(:,: &
-					,:),dimsfi,error,file_space_id = filespace(iv), mem_space_id &
-					=memspace,xfer_prp = plist_id)
-				endif
-				
-#else
-				call h5dwrite_f(dset_id(iv),H5T_NATIVE_REAL,TEMPORARY1(:,: &
-				,:) ,dimsfi,error)
-#endif      
-			
-		enddo !ivar
-	
-		if(debug)print *,rank,": after h5dwrite"
-	
-		!
-		! Close dataspaces.
-		!
-#ifdef MPI
-			do iv=1,nvars
-				
-				if (dsetbool(iv) .eq. 1) then 
-					
-					call h5sclose_f(filespace(iv), error)
-				endif
-			enddo
-			call h5sclose_f(memspace, error)
-#endif
-		!
-		! Close the dataset and property list.
-		!
-		do iv=1,nvars
-			
-			if (dsetbool(iv) .eq. 1) then 
-				
-				call h5dclose_f(dset_id(iv), error)
-			endif
-		enddo
-#ifdef MPI
-			call h5pclose_f(plist_id, error)
-#endif
-		!
-		! Close the file.
-		!
-		call h5fclose_f(file_id, error)
-		!
-		! Close FORTRAN predefined datatypes.
-		!
-		call h5close_f(error)
-		
-		if(debug) print *, rank,": finished writing fields"
-		
-		!-------------------------------------
-		!now write particles
-		!for huge don't need to write particles
-		goto 1681
-		!
-		!  Initialize FORTRAN predefined datatypes
-		!
-		call h5open_f(error) 
-		
-		! 
-		! Setup file access property list with parallel I/O access.
-		!
-#ifdef MPI
-			call h5pcreate_f(H5P_FILE_ACCESS_F, plist_id, error)
-			call h5pset_fapl_mpio_f(plist_id, mpi_comm_world, mpi_info_null, &
-			error)
-#endif
-		nvars=14+2+2+2
-		midvars=7+1+1+1
-		!      stride=100 !20 !1 !100 !60 !15 !*4
-		dsetname(1)="xi"
-		dsetname(2)="yi"
-		dsetname(3)="zi"
-		dsetname(4)="ui"
-		dsetname(5)="vi"
-		dsetname(6)="wi"
-		dsetname(7)="chi"
-		dsetname(8)="gammai"
-		dsetname(9)="indi"
-		dsetname(10)="proci"
-		dsetname(11)="xe"
-		dsetname(12)="ye"
-		dsetname(13)="ze"
-		dsetname(14)="ue"
-		dsetname(15)="ve"
-		dsetname(16)="we"
-		dsetname(17)="che"
-		dsetname(18)="gammae"
-		dsetname(19)="inde"
-		dsetname(20)="proce"
-		!      dsetname(15)="spectrum"
-		!need to add writing spectrum from root
-		
-		datarank=1
-		!find out number of ions and lecs
-#ifdef MPI
-			call mpi_allgather(ions,1,mpi_integer,all_ions,1,mpi_integer &
-			,mpi_comm_world, error)
-			call mpi_allgather(lecs,1,mpi_integer,all_lecs,1,mpi_integer &
-			,mpi_comm_world, error)
-			all_ions_lng=all_ions
-			all_lecs_lng=all_lecs
-#else
-			all_ions=ions
-			all_lecs=lecs
-			all_ions_lng=all_ions
-			all_lecs_lng=all_lecs
-#endif
-		dimsfions(1)=sum(all_ions_lng/stride)
-		dimsflecs(1)=sum(all_lecs_lng/stride)
-		dimsfiions(1)=dimsfions(1)
-		dimsfilecs(1)=dimsflecs(1)
-		dimsfiions(2:7)=0
-		dimsfilecs(2:7)=0
-		if(debug .and. rank .eq. 0) then 
-			print *, "all_ions", all_ions
-			print *, "all_lecs", all_lecs
-			print *,"dimsions", sum(all_ions_lng/stride)
-			print *,"dimslecs", sum(all_lecs_lng/stride)
-		endif
-		
-		allocate(temporary_vec(max(ions/stride,lecs/stride)))
-		
-		!
-		! Create the file collectively.
-		! 
-#ifdef MPI
-			call h5fcreate_f(fnameprt, H5F_ACC_TRUNC_F, file_id, error, &
-			access_prp = plist_id)
-			call h5pclose_f(plist_id, error)
-#else
-			call h5fcreate_f(fnameprt, H5F_ACC_TRUNC_F, file_id, error)
-#endif
-		
-		!
-		! Create the data space for the  dataset. 
-		!
-		
-		do i=1,midvars
-			call h5screate_simple_f(datarank, dimsfions(1), filespace(i), &
-			error)
-		enddo
-		do i=midvars+1,nvars
-			call h5screate_simple_f(datarank, dimsflecs(1), filespace(i), &
-			error)
-		enddo
-		
-		!
-		! Create the dataset with default properties.
-		!
-		do i=1,nvars
-			call h5dcreate_f(file_id, dsetname(i), H5T_NATIVE_REAL, &
-			filespace(i),dset_id(i), error)
-			call h5sclose_f(filespace(i), error)
-		enddo
-		
-		!
-		! Create property list for collective dataset write
-		!
-#ifdef MPI
-			call h5pcreate_f(H5P_DATASET_XFER_F, plist_id, error) 
-			call h5pset_dxpl_mpio_f(plist_id, H5FD_MPIO_COLLECTIVE_F, error)
-#endif
-		! 
-		! Select hyperslab in the file.
-		!
-		do i=1,nvars
-			
-			!
-			! Each process defines dataset in memory and writes it to the hyperslab
-			! in the file. 
-			!
-			if(i.le.midvars)countpart = ions/stride
-			if(i.gt.midvars)countpart = lecs/stride
-			
-			!      if(rank .eq. 0) print *, "allcounts=",all_counts
-			offsetpart = 0
-			if(rank .gt. 0) then 
-				if(i .le. midvars) then
-					offsetpart = sum(all_ions_lng(1:rank)/stride)
-				else
-					offsetpart = sum(all_lecs_lng(1:rank)/stride)
-				endif
-				!      print *,rank,":","offset=", offsetpart, "count=",countpart      
-			endif
-			
-#ifdef MPI
-				call h5screate_simple_f(1, countpart, memspace, error) 
-				
-				call h5dget_space_f(dset_id(i), filespace(i), error)
-				call h5sselect_hyperslab_f (filespace(i),H5S_SELECT_SET_F &
-				,offsetpart,countpart, error)
-#endif
-			!
-			! Write the dataset collectively. 
-			!
-			!      print *,rank,": before h5dwrite" 
-			!      temporary1=temporary_arr(:,:,:,i)
-			!_arr(:,:,:,i)
-			temporary_vec=0.
-			if(i.eq.1)  temporary_vec(1:ions/stride)=p(1:ions:stride)%x
-			if(i.eq.2) temporary_vec(1:ions/stride)=p(1:ions:stride)%y &
-			+modulo(rank,sizey)*(myall-5)
-			if(i.eq.3) temporary_vec(1:ions/stride)=p(1:ions:stride)%z+(rank &
-			/sizey)*(mzall-5)
-			
-			if(i.eq.4) temporary_vec(1:ions/stride)=p(1:ions:stride)%u
-			if(i.eq.5) temporary_vec(1:ions/stride)=p(1:ions:stride)%v
-			if(i.eq.6) temporary_vec(1:ions/stride)=p(1:ions:stride)%w
-			!         if(i.eq.7) temporary_vec(1:ions/stride)=sqrt(1./(1.
-			!     &             -(p(1:ions:stride)%u**2+p(1:ions:stride)%v**2
-			!     &             +p(1:ions:stride)%w **2)/c**2))
-			
-			if(i.eq.7) temporary_vec(1:ions/stride)=p(1:ions:stride)%ch
-			if(i.eq.8) temporary_vec(1:ions/stride)=sqrt(1. &
-			+(p(1:ions:stride)%u**2+p(1:ions:stride)%v**2 &
-			+p(1:ions:stride)%w**2))
-			
-			if(i.eq.9) temporary_vec(1:ions/stride)=real(p(1:ions:stride) &
-			%ind,4)
-			
-			if(i.eq.10) temporary_vec(1:ions/stride)=real(p(1:ions:stride) &
-			%proc,4)
-			
-			if(i.eq.11) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-			+lecs:stride)%x
-			if(i.eq.12) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-			+lecs:stride)%y+modulo(rank,sizey)*(myall-5)
-			if(i.eq.13) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-			+lecs:stride)%z+(rank/sizey)*(mzall-5)
-			if(i.eq.14) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-			+lecs:stride)%u
-			if(i.eq.15) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-			+lecs:stride)%v
-			if(i.eq.16) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-			+lecs:stride)%w
-			!         if(i.eq.14) temporary_vec(1:lecs/stride)=sqrt(1./(1. -(p(maxhlf
-			!     &             +1:maxhlf+lecs:stride)%u**2+p(maxhlf+1:maxhlf +lecs:stride
-			!     &             )%v**2+p(maxhlf +1:maxhlf+lecs:stride)%w**2)/c**2))
-			
-			if(i.eq.17) temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
-			+lecs:stride)%ch
-			if(i.eq.18) temporary_vec(1:lecs/stride)=sqrt(1. +(p(maxhlf &
-			+1:maxhlf+lecs:stride)%u**2+p(maxhlf+1:maxhlf +lecs:stride &
-			)%v**2+p(maxhlf +1:maxhlf+lecs:stride)%w**2))
-			
-			if(i.eq.19)temporary_vec(1:lecs/stride)=real(p(maxhlf+1:maxhlf &
-			+lecs:stride)%ind,4)
-			
-			if(i.eq.20)temporary_vec(1:lecs/stride)=real(p(maxhlf+1:maxhlf &
-			+lecs:stride)%proc,4)
-			
-#ifdef MPI
-				if(i .le. midvars) then 
-					call h5dwrite_real_1(dset_id(i), H5T_NATIVE_REAL, &
-					temporary_vec(1:ions/stride), dimsfiions,error &
-					,file_space_id = filespace(i), mem_space_id=memspace &
-					,xfer_prp = plist_id)
-				else 
-					call h5dwrite_real_1(dset_id(i), H5T_NATIVE_REAL, &
-					temporary_vec(1:lecs/stride), dimsfilecs,error &
-					,file_space_id = filespace(i), mem_space_id=memspace &
-					,xfer_prp = plist_id)
-				endif
-#else
-				if(i .le. midvars) then 
-					call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
-					temporary_vec(1:ions/stride), dimsfiions,error)
-				else 
-					call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
-					temporary_vec(1:lecs/stride), dimsfilecs,error)
-				endif
-#endif
-		
-#ifdef MPI
-				call h5sclose_f(memspace,error)
-#endif
-		
-		enddo
-	
-		!
-		! Close dataspaces.
-		!
-	
-#ifdef MPI
-			do i=1,nvars
-				call h5sclose_f(filespace(i), error)
-			enddo
-#endif
-		!
-		! Close the dataset and property list.
-		!
-		do i=1,nvars
-			call h5dclose_f(dset_id(i), error)
-		enddo
-#ifdef MPI
-			call h5pclose_f(plist_id, error)
-#endif
-		!
-		! Close the file.
-		!
-		call h5fclose_f(file_id, error)
-		!
-		! Close FORTRAN predefined datatypes.
-		!
-		call h5close_f(error)
-		
-		if(debug) print *, rank,": finished writing particles"
-		
-		!now write particles
-		!      if(rank.eq.0)then
-		
-		is=1
-		
-		deallocate(temporary_vec)
-		
-		1681     continue
-		
-		goto 11000
-		
-		write(12)real((ions/is),4),real((lecs/is),4), &
-		real(maxptl,4),real(maxhlf,4), &
-		(real(p(n)%x,4),n=1,(ions/is)*is,is), &
-		(real(p(n)%x,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-		(real(p(n)%y,4),n=1,(ions/is)*is,is), &
-		(real(p(n)%y,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-		(real(p(n)%z,4),n=1,(ions/is)*is,is), &
-		(real(p(n)%z,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-		(real(p(n)%u,4),n=1,(ions/is)*is,is), &
-		(real(p(n)%u,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-		(real(p(n)%v,4),n=1,(ions/is)*is,is), &
-		(real(p(n)%v,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is), &
-		(real(p(n)%w,4),n=1,(ions/is)*is,is), &
-		(real(p(n)%w,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is),     &
-		(real(p(n)%ch,4),n=1,(ions/is)*is,is), &
-		(real(p(n)%ch,4),n=maxhlf+1,maxhlf+(lecs/is)*is,is),     &
-		(real(1./sqrt(1.-(p(n)%u**2+p(n)%v**2+p(n)%w**2)/c**2),4),  &
-		n=1,(ions/is)*is,is), &
-		(real(1./sqrt(1.-(p(n)%u**2+p(n)%v**2+p(n)%w**2)/c**2),4),  &
-		n=maxhlf+1,maxhlf+(lecs/is)*is,is)
-		
-		11000 continue
-		deallocate(temporary1)
-	
-	endif
-	
-	istep=istep0
-	
-	
-end subroutine output_par
-
-
-
-!-------------------------------------------------------------------------------
-! 						subroutine write_testp1					 
-!																		
-!
-!  							
-!-------------------------------------------------------------------------------
-
-subroutine write_testp1()
-  implicit none
-  integer n, n1, statusfile
-  logical ext, twod
-  real bx0,by0,bz0,ex0,ey0,ez0,dummy,gam
-  character fnamehen*20, fnametst*20
-  integer lapsel,num1,proc1
-  
-  !     lapsel should match what it is written in selectprt.f
-  twod=.false.
-  lapsel=100000
-  
-  write(fnamehen,"(a9,i3.3)") "test.ene.",rank
-  
-  if(lap .lt. lapst+dlap) then  !first time -- delete the file and read particles to be saved
-     if(irestart.eq.0) then 
-        open(unit=44,file=fnamehen)
-        close(44,status='delete') 
-        open(unit=44,file=fnamehen)
-     endif
-     
-     if(irestart.eq.1) then 
-        inquire(file=fnamehen,exist=ext)
+        write(8)ions,lecs,maxptl,maxhlf, totalpartnum, &
+             (p(n)%x,n=1,ions),(p(n)%x,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%y,n=1,ions),(p(n)%y,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%z,n=1,ions),(p(n)%z,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%u,n=1,ions),(p(n)%u,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%v,n=1,ions),(p(n)%v,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%w,n=1,ions),(p(n)%w,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%ch,n=1,ions),(p(n)%ch,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%ind,n=1,ions),(p(n)%ind,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%proc,n=1,ions),(p(n)%proc,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%splitlev,n=1,ions), &
+             (p(n)%splitlev,n=maxhlf+1,maxhlf+lecs)
         
-        statusfile=0
-        if(ext) statusfile=1
-        if(statusfile .eq. 0) then 
-           open(unit=44,file=fnamehen)
-        else
-           open(unit=44,file=fnamehen,status='old',position='APPEND' &
-                )
-        endif
-     endif
+        close(8)
+     endif ! if(modulo(lap,intrestlocal) .eq.0)
+7645 continue
+#endif
+     !------------------------------
      
-     !     read the particles to be saved
-     write(fnametst,"(a9,i6.6)") "test.sel.",lapsel
-     open(unit=43, file=fnametst,form='formatted')
-     if (rank .eq. 0) print *,"loading particles from ",fnametst
-     sele=0
-     seli=0
-301  read(43,*,err=398,end=399)lapsel,num1,proc1,gam
-     if (modulo(abs(num1)-1,2) .eq. 0) then !ions
-        seli=seli+1
-     else                   !electrons
-        sele=sele+1
-     endif
-     goto 301
-398  print *,"error reading the test.sel. file"
-399  continue
-     
-     close(43)
-     
-     if (seli .ge. 1) allocate(selprti(seli))
-     if (sele .ge. 1) allocate(selprte(sele))
-     if (rank .eq. 0) print *,"done allocation ",fnametst
-     
-     open(unit=43, file=fnametst,form='formatted')
-     sele=0
-     seli=0
-401  read(43,*,err=498,end=499)lapsel,num1,proc1,gam
-     if (modulo(abs(num1)-1,2) .eq. 0) then !ions
-        seli=seli+1
-        selprti(seli)%ind=num1
-        selprti(seli)%proc=proc1
-     else !electrons
-        sele=sele+1
-        selprte(sele)%ind=num1
-        selprte(sele)%proc=proc1
-     endif
-     goto 401
-498  print *,"error reading the test.sel. file"
-499  continue
-     
-  endif !first time
-  
-  
-  !     search for ions
-  do n=1,ions
-     if(p(n)%ind .ne. 0) then 
-        do n1=1,seli
-           if(p(n)%ind .eq. selprti(n1)%ind .and. p(n)%proc .eq. &
-                selprti(n1)%proc) then 
-              call interpolfld(real(p(n)%x),p(n)%y,p(n)%z,bx0,by0, &
-                   bz0,ex0,ey0,ez0,dummy,dummy,dummy,dummy,dummy,dummy)
-              if (twod) then
-                 write(44,fmt="(i7, i12,i5,2(F10.3,' '), 6(E15.5,' ') &
-                      )")lap,p(n)%ind,p(n)%proc,p(n)%x,p(n)%y &
-                      +modulo(rank,sizey)*(myall-5), &
-                      p(n)%u,p(n)%v, &
-                      sqrt(1.+(p(n)%u**2+p(n)%v**2+p(n)%w**2)),&
-                      bz0,ex0,ey0
-              else
-                 write(44,fmt="(i7, i12,i5,3(F10.3,' '), 10(E15.5,' ') &
-                      )")lap,p(n)%ind,p(n)%proc,p(n)%x,p(n)%y &
-                      +modulo(rank,sizey)*(myall-5),p(n)%z+(rank/sizey) &
-                      *(mzall-5),p(n)%u,p(n)%v,p(n)%w, &
-                      sqrt(1.+(p(n)%u**2+p(n)%v**2+p(n)%w**2)),bx0 &
-                      ,by0,bz0,ex0,ey0,ez0                 
-              endif
+     call MPI_BARRIER(MPI_COMM_WORLD,ierr)
+		
+     !     check if I have time to save the restart file
+     if(modulo(lap,intrestart) .eq. 0  .or.exst1) then
+        if(rank.eq.0) then
+           time_end=mpi_wtime()
+           time_diff=time_end-time_beg !elapsed time
+           if(debug)print *,"times for restart",real(timespan,4), &
+                real(time_diff,4),real(time_cut,4) 
+           if(timespan-time_diff.gt.time_cut)then 
+              restart_status=1
+           else
+              restart_status=0
            endif
-        enddo
-     endif
-  enddo
-  
-  !      goto 456
-  !     search for electrons
-  do n=maxhlf+1,maxhlf+lecs
-     if(p(n)%ind .ne. 0) then
-        do n1=1,sele
-           if(p(n)%ind .eq. selprte(n1)%ind .and. p(n)%proc .eq. &
-                selprte(n1)%proc) then 
-              call interpolfld(real(p(n)%x),p(n)%y,p(n)%z,bx0,by0,&
-                   bz0,ex0,ey0,ez0,dummy,dummy,dummy,dummy,dummy,dummy)
-              if (twod) then
-                 write(44,fmt="(i7, i12,i5,2(F10.3,' '), 6(E15.5,' ')&
-                      )")lap,p(n)%ind,p(n)%proc,p(n)%x,p(n)%y &
-                      +modulo(rank,sizey)*(myall-5), &
-                      p(n)%u,p(n)%v, &
-                      sqrt(1.+(p(n)%u**2+p(n)%v**2+p(n)%w**2)), &
-                      bz0,ex0,ey0
-              else
-                 write(44,fmt="(i7, i12,i5,3(F10.3,' '), 10(E15.5,' ') &
-                      )")lap,p(n)%ind,p(n)%proc,p(n)%x,p(n)%y &
-                      +modulo(rank,sizey)*(myall-5),p(n)%z+(rank/sizey) &
-                      *(mzall-5),p(n)%u,p(n)%v,p(n)%w, &
-                      sqrt(1.+(p(n)%u**2+p(n)%v**2+p(n)%w**2)),bx0 &
-                      ,by0,bz0,ex0,ey0,ez0                 
-              endif
-           endif
-        enddo
-     endif
-  enddo
-456 continue
-  
-end subroutine write_testp1
 
+	   if(exst1) restart_status=1
+
+        endif
+        
+        call MPI_BCAST(restart_status,1,MPI_INTEGER,0, &
+             MPI_COMM_WORLD,ierr)               
+        if(debug)print *,"rank, restart_status",rank,restart_status
+     endif
+     
+     call MPI_BARRIER(MPI_COMM_WORLD,ierr)                
+                     
+     if((modulo(lap,intrestart) .eq. 0  .or.exst1) .and. restart_status .eq. 1) then 
+        
+        !install a semaphore
+        
+#ifdef MPI
+        if(rank .gt. 0) then 
+           token=rank-1
+           !wait for the message from the previous rank
+           call mpi_irecv(token,1, &
+                mpi_integer,rank-1,100,MPI_Comm_WORLD,request,ierr)
+           call mpi_wait(request,status,ierr)
+           
+           if (debug)print *,"rank ",rank," received the token from ",rank-1
+           
+           if(modulo(rank,15).ne.0 .and. rank .ne. size0-1) then
+              token=rank
+              call mpi_isend(token,1, &
+                   mpi_integer,rank+1,100,MPI_Comm_WORLD,request1,ierr)
+              call mpi_wait(request1,status1,ierr)
+           endif
+        endif
+3004    continue
+#endif
+        
+        open(unit=7,file=frestartfld, form='unformatted')
+        close(7,status='delete')
+        
+        open(unit=7,file=frestartfld, form='unformatted')
+        rewind 7
+        if(rank.eq.0)print *,"writing restart file"
+        write(7)mx,my,mz,ex,ey,ez,bx,by,bz,dseed,lap,xinject &
+             ,xinject2,xinject3,leftwall,walloc !,split_E_ions,split_E_lecs 
+        close(7)
+        
+        open(unit=8,file=frestartprt, form='unformatted')
+        close(8,status='delete')
+        
+        open(unit=8,file=frestartprt, form='unformatted')
+        rewind 8
+        if(rank .eq. 0) print *,"wrote fields, writing particles"
+
+         ! jaehong 9/2013; inludes totalpartnum.
+        write(8)ions,lecs,maxptl,maxhlf, totalpartnum, &
+             (p(n)%x,n=1,ions),(p(n)%x,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%y,n=1,ions),(p(n)%y,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%z,n=1,ions),(p(n)%z,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%u,n=1,ions),(p(n)%u,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%v,n=1,ions),(p(n)%v,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%w,n=1,ions),(p(n)%w,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%ch,n=1,ions),(p(n)%ch,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%ind,n=1,ions),(p(n)%ind,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%proc,n=1,ions),(p(n)%proc,n=maxhlf+1,maxhlf+lecs), &
+             (p(n)%splitlev,n=1,ions), &
+             (p(n)%splitlev,n=maxhlf+1,maxhlf+lecs)
+        
+        close(8)
+        !           if(rank.eq.0) 
+        if(rank.eq.0)print *,"done writing restart file"
+               
+        if(modulo(lap,namedrestartint) .eq. 0) then
+           if(rank.eq.0)print *, rank, ": renaming restart"
+           write(lapchar,"(i6.6)")lap	
+           frestartfldlap="restart/restflds."//trim(jobname) &
+                //"."//"lap"//trim(lapchar)//"."//trim(rankchar)//".d"
+           frestartprtlap="restart/restprtl."//trim(jobname) &
+                //"."//"lap"//trim(lapchar)//"."//trim(rankchar)//".d"
+           
+           
+           open(unit=7,file=frestartfldlap, form='unformatted')
+           close(7,status='delete')
+           
+           open(unit=7,file=frestartfldlap, form='unformatted')
+           rewind 7
+           if(rank.eq.0)print *,"writing laprestart file"
+           write(7)mx,my,mz,ex,ey,ez,bx,by,bz,dseed,lap,xinject &
+                ,xinject2,xinject3,leftwall,walloc !,split_E_ions,split_E_lecs 
+           close(7)
+           
+           open(unit=8,file=frestartprtlap, form='unformatted')
+           close(8,status='delete')
+           
+           open(unit=8,file=frestartprtlap, form='unformatted')
+           rewind 8
+           if(rank.eq.0)print *,"wrote fields, writing particles"
+           
+           write(8)ions,lecs,maxptl,maxhlf, totalpartnum, &
+                (p(n)%x,n=1,ions),(p(n)%x,n=maxhlf+1,maxhlf+lecs), &
+                (p(n)%y,n=1,ions),(p(n)%y,n=maxhlf+1,maxhlf+lecs), &
+                (p(n)%z,n=1,ions),(p(n)%z,n=maxhlf+1,maxhlf+lecs), &
+                (p(n)%u,n=1,ions),(p(n)%u,n=maxhlf+1,maxhlf+lecs), &
+                (p(n)%v,n=1,ions),(p(n)%v,n=maxhlf+1,maxhlf+lecs), &
+                (p(n)%w,n=1,ions),(p(n)%w,n=maxhlf+1,maxhlf+lecs), &
+                (p(n)%ch,n=1,ions),(p(n)%ch,n=maxhlf+1,maxhlf+lecs), &
+                (p(n)%ind,n=1,ions),(p(n)%ind,n=maxhlf+1,maxhlf+lecs), &
+                (p(n)%proc,n=1,ions),(p(n)%proc,n=maxhlf+1,maxhlf+lecs), &
+                (p(n)%splitlev,n=1,ions), &
+                (p(n)%splitlev,n=maxhlf+1,maxhlf+lecs)
+           
+           close(8)
+           !           if(rank.eq.0) 
+           if(rank.eq.0)print *,"done writing restart file"
+        endif
+        
+        !send the message to the next rank, if not the last
+        
+#ifdef MPI
+        if(modulo(rank,15).eq.0 .and. rank .ne. size0-1) then
+           token=rank
+           call mpi_isend(token,1, &
+                mpi_integer,rank+1,100,MPI_Comm_WORLD,request,ierr)
+        endif
+2121    continue
+        
+        call mpi_barrier(MPI_COMM_WORLD,ierr)
+#endif
+
+        if(rank .eq. 0 .and. exst1) then 
+           open(unit=11,file="write_restart",form='unformatted')
+           close(11,status='delete')
+        endif
+        
+        !after a barrier can delete the temporary files in /tmp
+        !            open(unit=7,file=frestartfldloc, form='unformatted')
+        !            close(7,status='delete')
+        !            open(unit=7,file=frestartprtloc, form='unformatted')
+        !            close(7,status='delete')
+        
+     endif
+  endif          
+  
+end subroutine write_restart
 
 !-------------------------------------------------------------------------------
-! 						subroutine write_testp0					 
+! 						subroutine save_param					 
 !																		
-! 
+! Saves parameters of the simulation run
 !  							
 !-------------------------------------------------------------------------------
-
-subroutine write_testp0()
+subroutine save_param()
 
   implicit none
 
-	! local variables
+  character(len=20) fparam
+  integer ::ind, datarank, error, i
+  integer,dimension(30)::intdata
+  real,dimension(30)::realdata
+  character(len=10) dsetnamei(30),dsetnamer(30)
+#ifdef HDF5
+  integer(HSIZE_T) dimsf(3)
+  integer(HID_T) :: file_id ! File identifier 
+  integer(HID_T) :: dset_id(40) ! Dataset identifier 
+  integer(HID_T) :: filespace(40) ! Dataspace identifier in file 
 
-	integer n,n1,statusfile,tstart
-	integer subpart,nsavi,nsave,nchild,powcut
-	logical ext, twod
-	real bx0,by0,bz0,ex0,ey0,ez0,dummy,gam,shockloc,shockloc0
-	character fnamehen*20
-	logical cond1a,cond1b,cond1,cond2
-	real d_cut,u_cut
-	real, dimension (4) :: gami_cut, game_cut
-	integer, dimension (4) :: whcut
-	
-	!     usage: nchild=1 is uniform downsampling; gami_cut(1) is lowest energy
-	twod=.false.
-	subpart=50 !for the highest energy bin
-	nchild=4 !for splitting
-	gami_cut=(/50.,100.,200.,400./)
-	game_cut=gami_cut !(/40.,80.,160.,320./)      
-	d_cut=400. ! less than d_cut skin depths downstream 
-	u_cut=800. ! the same, in the upstream
-	tstart=0 !starting lap
-	
-	whcut=0
-	nsavi=0
-	nsave=0
-	write(fnameprt,"(a9,i3.3)") "test.prt.",rank
-	fnamehen = "highen"//"."//trim(rankchar)
-	
-	if (rank .eq. 0) print *, "prt_first",prt_first
-	
-	!      if(lap .lt. lapst+dlap) then  !first time -- delete the file !uncomment this when saving just for one time
-	if (prt_first) then
-	 if(irestart.eq.0) then 
-		open(unit=22,file=fnameprt)
-		close(22,status='delete') 
-		open(unit=22,file=fnameprt)
-		
-		open(unit=42,file=fnamehen)
-		close(42,status='delete') 
-		open(unit=42,file=fnamehen)
-	 endif
-     
-	 if(irestart.eq.1) then 
-		
-		inquire(file=fnameprt,exist=ext)
-		
-		statusfile=0
-		if(ext) statusfile=1
-		if(statusfile .eq. 0) then 
-		   open(unit=22,file=fnameprt)
-		else
-		   open(unit=22,file=fnameprt,status='old',position='APPEND' &
-				)
-		endif
-		
-		
-		!commented out highen saving 8/27/08: check cond2 var below
-		inquire(file=fnamehen,exist=ext)
-		
-		statusfile=0
-		if(ext) statusfile=1
-		if(statusfile .eq. 0) then 
-		   !               open(unit=42,file=fnamehen)
-		else
-		   !               open(unit=42,file=fnamehen,status='old',position='APPEND' &
-		   !                   )
-		endif
-		
-	 endif
-	endif
-	
-	shockloc=lap*c*betshock !*movingshock
-	
-	shockloc0=betshock*c*tstart
-	
-	do n=1,ions 
-	 !minus 1 because all ions are odd, and electrons are even
-	 !position
-	 cond1a=(p(n)%ind .ne. 0. .and. &
-		  p(n)%x .gt. shockloc0-d_cut*c_omp-100-(lap-tstart)*c .and. &
-		  p(n)%x .lt. shockloc0+u_cut*c_omp+100+(lap-tstart)*c) 
-	 cond1a=(p(n)%ind .ne. 0. .and. &
-		  p(n)%x .gt. shockloc-d_cut*c_omp .and. &
-		  p(n)%x .lt. shockloc+u_cut*c_omp)
-	 !energy
-	 gam=sqrt(1+(p(n)%u**2+p(n)%v**2+p(n)%w**2))
-	 where(gami_cut/gam .gt. 1.) whcut=1
-	 if (whcut(1) .eq. 0) then !above gami_cut(1)
-		powcut=sum(whcut)
-		cond1b=(modulo(abs(p(n)%ind),subpart*nchild**powcut) .eq. 1)
-	 else
-		cond1b=.false. !below gami_cut(1)
-	 endif
-	 whcut=0
-	 !total
-	 cond1=(cond1a .and. cond1b)
-	 
-	 cond2=(gam .ge. 500000 .and. p(n)%x .gt. shockloc-4000)
-	 
-	 if(cond1  .or. cond2) then 
-		if (prt_first) nsavi=nsavi+1   
-		
-		call interpolfld(real(p(n)%x),p(n)%y,p(n)%z,bx0,by0,bz0,ex0,ey0 &
-			 ,ez0,dummy,dummy,dummy,dummy,dummy,dummy)
-		
-		if(cond1) then 
-		   if (twod) then
-			  write(22,fmt="(i7, i12,i5,2(F10.3,' '), 6(E15.5,' '))")lap &
-				   ,p(n)%ind,p(n)%proc,p(n)%x,p(n)%y +modulo(rank,sizey) &
-				   *(myall -5),p(n)%u,p(n) &
-				   %v,sqrt(1.+(p(n)%u**2+p(n)%v**2+p(n)%w**2)), &
-				   bz0,ex0,ey0
-		   else
-			  write(22,fmt="(i7, i12,i5,3(F10.3,' '), 10(E15.5,' '))")lap &
-				   ,p(n)%ind,p(n)%proc,p(n)%x,p(n)%y +modulo(rank,sizey) &
-				   *(myall -5),p(n)%z+(rank /sizey)*(mzall-5),p(n)%u,p(n) &
-				   %v,p(n)%w,sqrt(1.+(p(n)%u**2+p(n)%v**2+p(n)%w**2)),bx0 &
-				   ,by0,bz0,ex0,ey0,ez0
-		   endif
-		endif
-		   
-		if(cond2) then 
-		   if (twod) then
-			  write(42,fmt="(i7, i12,i5,2(F10.3,' '), 6(E15.5,' '))")lap &
-				   ,p(n)%ind,p(n)%proc,p(n)%x,p(n)%y +modulo(rank,sizey) &
-				   *(myall -5),p(n)%u,p(n) &
-				   %v,sqrt(1.+(p(n)%u**2+p(n)%v**2+p(n)%w**2)), &
-				   bz0,ex0,ey0 
-		   else
-			  write(42,fmt="(i7, i12,i5,3(F10.3,' '), 10(E15.5,' '))")lap &
-				   ,p(n)%ind,p(n)%proc,p(n)%x,p(n)%y +modulo(rank,sizey) &
-				   *(myall -5),p(n)%z+(rank /sizey)*(mzall-5),p(n)%u,p(n) &
-				   %v,p(n)%w,sqrt(1.+(p(n)%u**2+p(n)%v**2+p(n)%w**2)),bx0 &
-				   ,by0,bz0,ex0,ey0,ez0
-		   endif
-		endif
-		
-	 endif
-	 
-	 
-	enddo
-	
-	if (rank .eq. 0 .and. prt_first) &
-	   print *,"Saved ions in rank=0:",nsavi
-	
-	!---------------------------------------------------------------------------
-	!      goto 7066 !only save positrons
-	
-	do n=maxhlf+1,maxhlf+lecs 
-	 !     no minus 1 because all ions are odd, and electrons are even
-	 !position
-	 cond1a=(p(n)%ind .ne. 0. .and. &
-		  p(n)%x .gt. shockloc0-d_cut*c_omp-100-(lap-tstart)*c .and. &
-		  p(n)%x .lt. shockloc0+u_cut*c_omp+100+(lap-tstart)*c)
-	 cond1a=(p(n)%ind .ne. 0. .and. &
-		  p(n)%x .gt. shockloc-d_cut*c_omp .and. &
-		  p(n)%x .lt. shockloc+u_cut*c_omp)
-	 !energy
-	 gam=sqrt(1+(p(n)%u**2+p(n)%v**2+p(n)%w**2))
-	 where(game_cut/gam .gt. 1.) whcut=1
-	 if (whcut(1) .eq. 0) then !above game_cut(1)
-		powcut=sum(whcut)
-		cond1b=(modulo(abs(p(n)%ind),subpart*nchild**powcut) .eq. 0)
-	 else
-		cond1b=.false. !below game_cut(1)
-	 endif
-	 whcut=0
-	 !total
-	 cond1=(cond1a .and. cond1b)
-	 
-	 cond2=(gam .ge. 500000 .and. p(n)%x .gt. shockloc-4000)
-	 
-	 if(cond1  .or. cond2)  then
-		if (prt_first) nsave=nsave+1    
-		
-		call interpolfld(real(p(n)%x),p(n)%y,p(n)%z,bx0,by0,bz0,ex0,ey0 &
-			 ,ez0,dummy,dummy,dummy,dummy,dummy,dummy)
-		
-		if(cond1) then
-		   if (twod) then
-			  write(22,fmt="(i7, i12,i5,2(F10.3,' '), 6(E15.5,' '))")lap &
-				   ,p(n)%ind,p(n)%proc,p(n)%x,p(n)%y +modulo(rank,sizey) &
-				   *(myall -5),p(n)%u,p(n) &
-				   %v,sqrt(1.+(p(n)%u**2+p(n)%v**2+p(n)%w**2)), &
-				   bz0,ex0,ey0
-		   else
-			  write(22,fmt="(i7, i12,i5,3(F10.3,' '), 10(E15.5,' '))")lap &
-				   ,p(n)%ind,p(n)%proc,p(n)%x,p(n)%y +modulo(rank,sizey) &
-				   *(myall -5),p(n)%z+(rank /sizey)*(mzall-5),p(n)%u,p(n) &
-				   %v,p(n)%w,sqrt(1.+(p(n)%u**2+p(n)%v**2+p(n)%w**2)),bx0 &
-				   ,by0,bz0,ex0,ey0,ez0
-		   endif
-		endif
-		
-		if(cond2) then 
-		   if (twod) then
-			  write(42,fmt="(i7, i12,i5,2(F10.3,' '), 6(E15.5,' '))")lap &
-				   ,p(n)%ind,p(n)%proc,p(n)%x,p(n)%y +modulo(rank,sizey) &
-				   *(myall -5),p(n)%u,p(n) &
-				   %v,sqrt(1.+(p(n)%u**2+p(n)%v**2+p(n)%w**2)), &
-				   bz0,ex0,ey0
-		   else
-			  write(42,fmt="(i7, i12,i5,3(F10.3,' '), 10(E15.5,' '))")lap &
-				   ,p(n)%ind,p(n)%proc,p(n)%x,p(n)%y +modulo(rank,sizey) &
-				   *(myall -5),p(n)%z+(rank /sizey)*(mzall-5),p(n)%u,p(n) &
-				   %v,p(n)%w,sqrt(1.+(p(n)%u**2+p(n)%v**2+p(n)%w**2)),bx0 &
-				   ,by0,bz0,ex0,ey0,ez0
-		   endif
-		endif
-	
-	 endif
-	 
-	 
-	enddo
-	
-	if (rank .eq. 0 .and. prt_first) & 
-	   print *,"Saved electrons in rank=0:",nsave
-	
-	7066 continue
-	
-	!--------------------------------------------------------------------
-	
-	
-	if(rank .eq. 0) print *, "Test particles -- 1 in ",subpart," !" 
-	
-	!check which particles are the same
-	goto 7067
-	do n=1,ions
-	 if(p(n)%ind .ne. 0) then 
-		do n1=1,ions
-		   if(p(n)%ind .eq. p(n1)%ind) then 
-			  if(n .ne. n1) then 
-				 print *, "Same ion",rank,":",p(n)%ind, n, n1 
-			  endif
-		   endif
-		   
-		enddo
-	 endif
-	enddo
-	
-	do n=maxhlf+1,maxhlf+lecs
-	 if(p(n)%ind .ne. 0) then
-		do n1=maxhlf+1, maxhlf+lecs
-		   if(p(n)%ind .eq. p(n1)%ind) then 
-			  if(n .ne. n1) then 
-				 print *, "Same lec",rank,":",p(n)%ind, n, n1 
-			  endif
-		   endif
-		   
-		enddo
-	 endif
-	enddo
-	7067 continue
+#endif
+!  integer(HID_T) :: memspace ! Dataspace identifier in memory
+!  integer(HID_T) :: plist_id ! Property list identifier
   
-end subroutine write_testp0
+  if(lap .ge.pltstart .and. modulo((lap-pltstart),interval) .eq.0) then
+
+     ind=(lap-pltstart)/interval
+     write(indchar,"(i3.3)")ind
+     !save parameter file
+     !          goto 608
+     fparam="output/param."//trim(indchar)
+     
+     if(rank .eq. 0) then
+        print *,"",fparam
+        open(unit=12,file=fparam,form='unformatted')
+        close(12,status='delete')
+        call h5open_f (error)
+        call h5fcreate_f(fparam, H5F_ACC_TRUNC_F, file_id, error)
+        datarank=1
+        dimsf(1)=1
+        
+        !first pack them into an array
+        intdata(1)=int(mx0)
+        intdata(2)=my0
+        intdata(3)=mz0
+        intdata(4)=1 !caseinit
+        intdata(5)=interval
+        intdata(6)=torqint
+        intdata(7)=pltstart
+        intdata(8)=istep
+        intdata(9)=istep1
+        intdata(10)=stride
+        intdata(11)=ntimes
+        intdata(12)=0
+!        if(cooling) intdata(12)=1
+        intdata(12)=1
+        intdata(13)=sizex
+        intdata(14)=sizey
+		intdata(15)=dlaplec
+		intdata(16)=dlapion
+		intdata(17)=teststartlec
+		intdata(18)=teststartion
+		intdata(19)=testendlec
+		intdata(20)=testendion
+			
+        realdata(1)=c
+        realdata(2)=sigma
+        realdata(3)=c_omp
+        realdata(4)=gamma0
+        realdata(5)=delgam
+        realdata(6)=ppc0
+        realdata(7)=me
+        realdata(8)=mi
+        realdata(9)=dummyvar
+        realdata(10)= 0 !acool
+        realdata(11)=lap*(c/c_omp)
+        realdata(12)=qi
+        realdata(13)=btheta
+        realdata(14)=bphi
+        realdata(15)=xinject2
+        realdata(16)=walloc
+        
+        dsetnamei(1)="mx0"
+        dsetnamei(2)="my0"
+        dsetnamei(3)="mz0"
+        dsetnamei(4)="caseinit"
+        dsetnamei(5)="interval"
+        dsetnamei(6)="torqint"
+        dsetnamei(7)="pltstart"
+        dsetnamei(8)="istep"
+        dsetnamei(9)="istep1"
+        dsetnamei(10)="stride"
+        dsetnamei(11)="ntimes"
+        dsetnamei(12)="cooling"
+        dsetnamei(13)="sizex"
+        dsetnamei(14)="sizey"
+        dsetnamei(15)="dlaplec"
+        dsetnamei(16)="dlapion"
+        dsetnamei(17)="teststartlec"
+		dsetnamei(18)="teststartion"
+		dsetnamei(19)="testendlec"
+		dsetnamei(20)="testendion"
+
+        
+        dsetnamer(1)="c"
+        dsetnamer(2)="sigma"
+        dsetnamer(3)="c_omp"
+        dsetnamer(4)="gamma0"
+        dsetnamer(5)="delgam"
+        dsetnamer(6)="ppc0"
+        dsetnamer(7)="me"
+        dsetnamer(8)="mi"
+        dsetnamer(9)="dummy"
+        dsetnamer(10)="acool"
+        dsetnamer(11)="time"
+        dsetnamer(12)="qi"
+        dsetnamer(13)="btheta"
+        dsetnamer(14)="bphi"
+        dsetnamer(15)="xinject2"
+        dsetnamer(16)="walloc"
+        
+         do i=1,20
+           if(debug)print *, rank,": dataseti ",i
+           call h5screate_simple_f(datarank, dimsf, filespace(1), &
+                error)
+           call h5dcreate_f(file_id, dsetnamei(i), H5T_NATIVE_INTEGER, &
+                filespace(1),dset_id(1), error)
+           !call h5dwrite_integer_1(dset_id(1),H5T_NATIVE_INTEGER &
+           !     ,intdata(i),dimsf,error)
+	    call h5dwrite_f(dset_id(1),H5T_NATIVE_INTEGER &
+                ,intdata(i),dimsf,error)
+
+           call h5dclose_f(dset_id(1), error)
+           call h5sclose_f(filespace(1), error)
+        enddo
+        
+        do i=1,16
+           if(debug)print *,rank, ": datasetr ",i
+           call h5screate_simple_f(datarank, dimsf, filespace(1), &
+                error)
+           call h5dcreate_f(file_id, dsetnamer(i), H5T_NATIVE_REAL, &
+                filespace(1),dset_id(1), error)
+           !call h5dwrite_real_1(dset_id(1),H5T_NATIVE_REAL,realdata(i) &
+           !     ,dimsf,error)
+           call h5dwrite_f(dset_id(1),H5T_NATIVE_REAL,realdata(i) &
+                ,dimsf,error)
+
+           call h5dclose_f(dset_id(1), error)
+           call h5sclose_f(filespace(1), error)
+        enddo   
+        
+        datarank=1
+        dimsf=sizex
+        dsetnamei(22)="mx"
+        
+ 	    call h5screate_simple_f(datarank, dimsf, filespace(1), &
+                error)
+        call h5dcreate_f(file_id, dsetnamei(22), H5T_NATIVE_INTEGER, &
+                filespace(1),dset_id(1), error)
+        !call h5dwrite_integer_1(dset_id(1),H5T_NATIVE_INTEGER &
+        !        ,mxl(1:sizex),dimsf,error)
+
+        call h5dwrite_f(dset_id(1),H5T_NATIVE_INTEGER &
+                ,mxl(1:sizex),dimsf,error)
+
+        call h5dclose_f(dset_id(1), error)
+        call h5sclose_f(filespace(1), error)
+              
+        
+        datarank=1
+        dimsf=sizey
+        dsetnamei(23)="my"
+        
+ 	    call h5screate_simple_f(datarank, dimsf, filespace(1), &
+                error)
+        call h5dcreate_f(file_id, dsetnamei(23), H5T_NATIVE_INTEGER, &
+                filespace(1),dset_id(1), error)
+        !call h5dwrite_integer_1(dset_id(1),H5T_NATIVE_INTEGER &
+        !        ,myl(1:(sizey-1)*sizex+1:sizex),dimsf,error)
+        call h5dwrite_f(dset_id(1),H5T_NATIVE_INTEGER &
+                ,myl(1:(sizey-1)*sizex+1:sizex),dimsf,error)
+
+        call h5dclose_f(dset_id(1), error)
+        call h5sclose_f(filespace(1), error)
+           
+           
+        call h5fclose_f(file_id,error)
+        call h5close_f(error)
+        
+     endif
+608  continue
+     
+  endif !if (lap .ge. pltstart)
+  
+end subroutine save_param
+
+
+!-------------------------------------------------------------------------------
+! 						subroutine output_tot					 
+!																		
+! Saves fluid (flds.tot.) and particle (prtl.tot.) data 
+!  							
+!-------------------------------------------------------------------------------
+
+subroutine output_tot()
+  
+  implicit none
+  
+  ! local variables
+  integer ::ind,kglob,kloc,kstart,kfinish,nz,info,n,i,j,k,ierr
+  integer ::istart,ifinish,jstart,jfinish,nx,ny,iv,mz1,my1,mx1
+  real bx0,by0,bz0,ex0,ey0,ez0,bxd,byd,bzd,exd,eyd,ezd,curx0, &
+       cury0,curz0
+  integer ::error ! Error flags
+  integer ::nvars, midvars
+  integer ::all_ions(size0), all_lecs(size0)
+  integer*8 all_ions_lng(size0), all_lecs_lng(size0)
+  character(len=6) :: dsetname(40),varname  
+  integer ::datarank
+  integer :: ifindi,ifind
+
+  !intel compiler bug mem_space and file_space ids cannot be defined inline infunction MKG 25/1/2019 - search for comment with MKG 25/1/2019
+
+  integer(HID_T) :: file_space_id, mem_space_id
+#ifdef HDF5
+  integer(HID_T) :: file_id ! File identifier 
+  integer(HID_T) :: dset_id(40) ! Dataset identifier 
+  integer(HID_T) :: filespace(40) ! Dataspace identifier in file 
+  integer(HID_T) :: memspace ! Dataspace identifier in memory
+  integer(HID_T) :: plist_id ! Property list identifier
+  integer(HSIZE_T) dimsf(3),dimsfions(1), dimsflecs(1)
+  integer(HSIZE_T) dimsfi(7),dimsfiions(7), dimsfilecs(7)
+  integer(HSIZE_T), DIMENSION(3) :: count  
+  integer(HSSIZE_T), DIMENSION(3) :: offset
+  integer(HSIZE_T), DIMENSION(1) :: countpart  
+  integer(HSSIZE_T), DIMENSION(1) :: offsetpart
+#endif 
+  integer ::FILE_INFO_TEMPLATE !for MPI file info
+  integer ::procn
+  integer ::mx1list(size0),my1list(size0),mz1list(size0) 
+  real*4, allocatable :: temporary0(:,:,:),temporary0_vec(:)  
+  real*4,allocatable:: temporary_vec(:)
+  integer*8, allocatable:: selecti_vec(:),selecte_vec(:) 
+  integer :: status(MPI_STATUS_SIZE)
+  integer ::tmp1,tmp1i,tmp1e
+  logical :: saverank
+  integer ::token,request,status2(MPI_STATUS_SIZE),request1 &
+      ,status1(MPI_STATUS_SIZE)
+  logical :: writecurr
+ 
+
+  if(lap .ge.pltstart .and. modulo((lap-pltstart),interval) .eq.0)then
+
+     !timestamp of the saved output
+     ind=(lap-pltstart)/interval	    
+     write(fnamefld,"(a16,i3.3)") "output/flds.tot.",ind
+     write(fnameprt,"(a16,i3.3)") "output/prtl.tot.",ind     
+     write(indchar,"(i3.3)")ind     
+     if(rank.eq.0.and.debug)write(*,*) rank,": ",fnamefld,'  ',fnameprt
+     
+     !just in case destroy the file
+     if(rank .eq. 0) then 
+        open(unit=11,file=fnamefld,form='unformatted')
+        close(11,status='delete')
+        open(unit=12,file=fnameprt,form='unformatted')
+        close(12,status='delete')
+     endif
+     
+     call MPI_BARRIER(MPI_COMM_WORLD,ierr)     
+
+     
+     !specify FILE_INFO_TEMPLATE for parallel output
+#ifndef serIO 
+#ifdef MPI     
+     call MPI_Info_create(FILE_INFO_TEMPLATE,error)
+     call MPI_Info_set(FILE_INFO_TEMPLATE, "access_style",  &
+          "write_once",error)
+     call MPI_Info_set(FILE_INFO_TEMPLATE,  &
+          "collective_buffering", "true",error)
+     call MPI_Info_set(FILE_INFO_TEMPLATE, "cb_block_size", &
+          "4194304",error)
+     call MPI_Info_set(FILE_INFO_TEMPLATE, "cb_buffer_size", &
+          "16777216",error)
+     call MPI_Info_set(FILE_INFO_TEMPLATE, "cb_nodes", &
+          "1",error)
+#endif
+#endif
+
+
+     !FLDS.TOT. saving
+     if (rank.eq.0)print *,"",fnamefld
+     
+     !user input: array of variables to be saved for flds.tot.
+     !usage:
+     !-the first entry should have the largest number of characters
+     !(if needed, supplemented with empty spaces)
+     !to be chosen from:
+     !dens,densi: density and density of ions
+     !ex,ey,ez,bx,by,bz,jx,jy,jz:fields and currents
+     !v3x,v3xi,v3y,v3yi,v3z,v3zi:3-velocity
+     !v4x,v4xi,v4y,v4yi,v4z,v4zi:4-velocity (momentum)
+     !ken,keni:particle total energy
+#ifdef twoD
+  if (sigma .eq. 0. .and. pcosthmult .eq. 0) then 
+     nvars=15
+     dsetname(1:nvars)=(/&
+          'dens  ','densi '&
+!          ,'bdens ','bdensi'&
+          ,'v3x   ','v3xi  ','v3y   ','v3yi  '&
+!          ,'v4x   ','v4xi  ','v4y   ','v4yi  ','ken   ','keni  '&
+          ,'ex    ','ey    ','ez    ','bx    ','by    ','bz    ','jx    ','jy    ','jz    '&
+       /)
+  else
+  nvars=17!27!19
+  dsetname(1:nvars)=(/&
+       'dens  ','densi '&
+!       ,'bdens ','bdensi'&
+       ,'v3x   ','v3xi  ','v3y   ','v3yi  ','v3z   ','v3zi  '&
+!       ,'v4x   ','v4xi  ','v4y   ','v4yi  ','v4z   ','v4zi  ','ken   ','keni  '&
+       ,'ex    ','ey    ','ez    ','bx    ','by    ','bz    ','jx    ','jy    ','jz    '&
+       /)
+  endif
+#else
+  nvars=17
+  dsetname(1:nvars)=(/&
+       'dens  ','densi '&
+!       ,'bdens ','bdensi'&
+       ,'v3x   ','v3xi  ','v3y   ','v3yi  ','v3z   ','v3zi  '&
+!       ,'v4x   ','v4xi  ','v4y   ','v4yi  ','v4z   ','v4zi  ','ken   ','keni  '&
+       ,'ex    ','ey    ','ez    ','bx    ','by    ','bz    ','jx    ','jy    ','jz    '&
+       /)
+#endif
+
+     
+     !compute global size of fluid arrays to be saved
+     dimsf(1)=mx0/istep
+     dimsf(2)=my0/istep  
+#ifndef twoD
+     dimsf(3)=mz0/istep
+#else
+     dimsf(3)=1
+#endif 
+     dimsfi(1:3)=dimsf(1:3)
+     dimsfi(4:7)=0
+     datarank=3
+     
+#ifndef twoD     
+     !computing my1 and mz1 for each processor
+     kstart=3
+     kfinish=mz-3
+     if(rank/(sizex*sizey) .eq. 0) kstart=1
+     if(rank/(sizex*sizey) .eq. sizez-1) kfinish=mz
+110  if(modulo(kstart+mzcum,istep) .eq. 0) goto 120
+     kstart=kstart+1
+     goto 110
+120  continue
+     
+130  if(modulo(kfinish+mzcum,istep) .eq. 0) goto 140
+     kfinish=kfinish-1
+     goto 130
+140  continue
+     
+     mz1=(kfinish-kstart)/istep+1
+#else
+     kstart=1
+     kfinish=1
+     mz1=1
+#endif
+     
+     jstart=3
+     jfinish=my-3
+     if(modulo(rank,sizex*sizey)/sizex .eq. 0) jstart=1
+     if(modulo(rank,sizex*sizey)/sizex .eq. sizey-1) jfinish=my
+
+210  if(modulo(jstart+mycum,istep) .eq. 0) goto 220	
+     jstart=jstart+1
+     goto 210
+220  continue
+
+230  if(modulo(jfinish+mycum,istep) .eq. 0)  goto 240
+     jfinish=jfinish-1
+     goto 230
+240  continue      
+     
+     my1=(jfinish-jstart)/istep+1
+     
+     istart=3
+     ifinish=mx-3
+     if(modulo(rank,sizex) .eq. 0) istart=1
+     if(modulo(rank,sizex) .eq. sizex-1) ifinish=mx
+     
+310  if(modulo(istart+int(mxcum),istep) .eq. 0) goto 320	
+     istart=istart+1
+     goto 310
+320  continue
+
+330  if(modulo(ifinish+int(mxcum),istep) .eq. 0)  goto 340
+     ifinish=ifinish-1
+     goto 330
+340  continue
+     
+     mx1=(ifinish-istart)/istep+1
+     
+  
+! determine whether the current processor should save any cell
+     if (kfinish .lt. kstart) then
+        kfinish=1
+        kstart=1
+        mz1=0
+     endif
+     if (jfinish .lt. jstart) then
+        jfinish=1
+        jstart=1
+        my1=0
+     endif
+     
+     if (ifinish .lt. istart) then
+        ifinish=1
+        istart=1
+        mx1=0
+     endif     
+     
+     !allocate temporary1 on every processor
+     if(debug) print *, rank,"in output b4 allocate"
+     allocate(temporary1(max(mx1,1),max(my1,1),max(mz1,1)))
+
+
+     !getting information about the size of temporary1
+#ifdef MPI
+     if(debug) print *, rank,": in output, b4 allgather", mx1
+     call mpi_allgather(mx1,1,mpi_integer,mx1list,1,mpi_integer &
+          ,mpi_comm_world, error)
+     if(debug) print *, rank,": in output, b4 allgather", my1
+     call mpi_allgather(my1,1,mpi_integer,my1list,1,mpi_integer &
+          ,mpi_comm_world, error)
+     if(debug) print *, rank,": in output, b4 allgather", mz1
+     call mpi_allgather(mz1,1,mpi_integer,mz1list,1,mpi_integer &
+          ,mpi_comm_world, error) 
+#ifdef serIO       
+     if (rank .eq. 0) then
+        allocate(temporary0(maxval(mx1list),maxval(my1list), &
+             maxval(mz1list)))
+        temporary0(:,:,:)=0.
+     endif
+#endif
+#endif
+
+!decide if I need to write currents to disk
+     writecurr=.false.
+     do iv=1,nvars
+        varname=trim(dsetname(iv))
+        if (varname .eq. 'jx' .or. varname .eq. 'jy' .or. varname .eq. 'jz' ) writecurr=.true. 
+     enddo
+     
+     if (writecurr) then
+
+        !install a semaphore        
+#ifdef MPI
+        if(rank .gt. 0) then 
+           token=rank-1
+           !wait for the message from the previous rank
+           call mpi_irecv(token,1, &
+                mpi_integer,rank-1,100,MPI_Comm_WORLD,request,ierr)
+           call mpi_wait(request,status2,ierr)
+           
+           if (debug)print *,"rank ",rank," received the token from ",rank-1
+           
+           if(modulo(rank,15).ne.0 .and. rank .ne. size0-1) then
+              token=rank
+              call mpi_isend(token,1, &
+                   mpi_integer,rank+1,100,MPI_Comm_WORLD,request1,ierr)
+              call mpi_wait(request1,status1,ierr)
+           endif
+        endif
+3004    continue
+#endif
+
+     !writing currents (all procs)
+     open(unit=7,file=fenlargeloc, form='unformatted')
+     rewind 7
+     write(7) (((curx(i,j,k),i=1,mx),j=1,my),k=1,mz), &
+          (((cury(i,j,k),i=1,mx),j=1,my),k=1,mz), &
+          (((curz(i,j,k),i=1,mx),j=1,my),k=1,mz)
+     close(7)
+
+        !send the message to the next rank, if not the last        
+#ifdef MPI
+        if(modulo(rank,15).eq.0 .and. rank .ne. size0-1) then
+           token=rank
+           call mpi_isend(token,1, &
+                mpi_integer,rank+1,100,MPI_Comm_WORLD,request,ierr)
+        endif
+2121    continue
+        
+        call mpi_barrier(MPI_COMM_WORLD,ierr)
+#endif
+
+     endif !writecurr
+
+     !
+     !  Initialize FORTRAN predefined datatypes
+     !
+#ifdef serIO
+     if (rank .eq. 0) then
+        call h5open_f(error)
+     endif
+#else
+     call h5open_f(error) 
+#endif
+   
+     ! 
+     ! Setup file access property list if parallel I/O access.
+     !   
+#ifndef serIO
+#ifdef MPI
+     call h5pcreate_f(H5P_FILE_ACCESS_F, plist_id, error)
+     !      call H5Pset_sieve_buf_size_f(plist_id, 262144,error) 
+     !      call H5Pset_alignment_f(plist_id, 524288, 262144,error)
+     call h5pset_fapl_mpio_f(plist_id, mpi_comm_world, &
+          FILE_INFO_TEMPLATE,error)
+#endif
+#endif
+     
+     !
+     ! Create the file
+     !
+#ifdef MPI
+#ifdef serIO
+     if (rank .eq. 0) then
+        call h5fcreate_f(fnamefld, H5F_ACC_TRUNC_F, file_id, error, &
+             h5p_default_f,h5p_default_f)
+     endif
+#else
+     call h5fcreate_f(fnamefld, H5F_ACC_TRUNC_F, file_id, error, &
+          access_prp = plist_id)
+     call h5pclose_f(plist_id, error)
+#endif
+#else
+     call h5fcreate_f(fnamefld, H5F_ACC_TRUNC_F, file_id, error)
+#endif  
+
+     !
+     ! Create the dataspace for the dataset
+     !
+#ifdef serIO
+     if (rank .eq. 0) then
+        do i=1,nvars
+           call h5screate_simple_f(datarank, dimsf, filespace(i), error)
+        enddo
+     endif
+#else
+     do i=1,nvars
+        call h5screate_simple_f(datarank, dimsf, filespace(i), error)
+     enddo
+#endif
+     
+     !
+     ! Loop over variables
+     !
+     do iv=1,nvars
+
+        varname=trim(dsetname(iv))
+
+        !
+        ! Define the array
+        !        
+        !pre-processing of some field quantities
+        !total density and ion density
+        if(varname.eq.'dens' ) call meanq_fld_cur('tdens')
+        if(varname.eq.'densi') call meanq_fld_cur('idens')
+        if(varname.eq.'bdens' ) call meanq_fld_cur('btden')
+        if(varname.eq.'bdensi') call meanq_fld_cur('biden')
+        !velocities, momenta and energy
+        if(varname.eq.'v3x'  ) call meanq_fld_cur('tbetx')
+        if(varname.eq.'v3y'  ) call meanq_fld_cur('tbety')
+        if(varname.eq.'v3z'  ) call meanq_fld_cur('tbetz') 
+        if(varname.eq.'v3xi' ) call meanq_fld_cur('ibetx')
+        if(varname.eq.'v3yi' ) call meanq_fld_cur('ibety')
+        if(varname.eq.'v3zi' ) call meanq_fld_cur('ibetz')
+        if(varname.eq.'v4x'  ) call meanq_fld_cur('tmomx')
+        if(varname.eq.'v4y'  ) call meanq_fld_cur('tmomy')
+        if(varname.eq.'v4z'  ) call meanq_fld_cur('tmomz')
+        if(varname.eq.'v4xi' ) call meanq_fld_cur('imomx')
+        if(varname.eq.'v4yi' ) call meanq_fld_cur('imomy')
+        if(varname.eq.'v4zi' ) call meanq_fld_cur('imomz')
+        if(varname.eq.'ken'  ) call meanq_fld_cur('tener')
+        if(varname.eq.'keni' ) call meanq_fld_cur('iener')     
+        !electric currents
+        if(varname.eq.'jx'.or.varname.eq.'jy'.or.varname.eq.'jz') then 
+!        if(varname.eq.'jx'.or.varname.eq.'jy') then 
+           !     restore currents from file
+           open(unit=7,file=fenlargeloc, form='unformatted')
+           rewind 7
+           if(debug.and.rank.eq.0) print *, rank,":reading back current file"
+           read(7)(((curx(i,j,k),i=1,mx),j=1,my),k=1,mz), &
+                (((cury(i,j,k),i=1,mx),j=1,my),k=1,mz), &
+                (((curz(i,j,k),i=1,mx),j=1,my),k=1,mz)
+           if(debug .and. rank.eq.0)print *, rank,"resetting arrays"           
+        endif
+        
+        ! define temporary1 for every processor
+
+        do k=kstart, kfinish, istep 
+           nz=(k-kstart)/istep+1
+           do j=jstart, jfinish,istep 
+              ny=(j-jstart)/istep+1
+              do i=istart, ifinish,istep 
+              	 nx=(i-istart)/istep+1
+  
+              	 select case (varname)
+                 case('dens','densi')
+                    temporary1(nx,ny,nz)=real(curx(i,j,k),4)
+                 case('ex')
+                    call interpolfld(real(i),real(j), &
+                         real(k),bx0,by0,bz0,ex0,ey0,ez0,bxd, &
+                         byd,bzd,exd,eyd,ezd) 
+                    temporary1(nx,ny,nz)=real(ex0+exd,4) 
+                 case('ey')
+                    call interpolfld(real(i),real(j), &
+                         real(k),bx0,by0,bz0,ex0,ey0,ez0,bxd, &
+                         byd,bzd,exd,eyd,ezd) 
+                    temporary1(nx,ny,nz)=real(ey0+eyd,4) 
+                 case('bz')
+                    call interpolfld(real(i),real(j), &
+                         real(k),bx0,by0,bz0,ex0,ey0,ez0,bxd, &
+                         byd,bzd,exd,eyd,ezd) 
+                    temporary1(nx,ny,nz)=real(bz0+bzd,4)
+                 case('ez')
+                    call interpolfld(real(i),real(j), &
+                         real(k),bx0,by0,bz0,ex0,ey0,ez0,bxd, &
+                         byd,bzd,exd,eyd,ezd) 
+                    temporary1(nx,ny,nz)=real(ez0+ezd,4) 
+                 case('bx')
+                    call interpolfld(real(i),real(j), &
+                         real(k),bx0,by0,bz0,ex0,ey0,ez0,bxd, &
+                         byd,bzd,exd,eyd,ezd) 
+                    temporary1(nx,ny,nz)=real(bx0+bxd,4)
+                 case('by')
+                    call interpolfld(real(i),real(j), &
+                         real(k),bx0,by0,bz0,ex0,ey0,ez0,bxd, &
+                         byd,bzd,exd,eyd,ezd) 
+                    temporary1(nx,ny,nz)=real(by0+byd,4)
+                 case('jx')
+                    !                   call interpolcurrent(real(i),real(j), &
+                    !                        real(k),curx0, cury0, curz0)
+                    curx0=curx(i,j,k)
+                    temporary1(nx,ny,nz)=real(curx0,4)
+                 case('jy')
+                    !                   call interpolcurrent(real(i),real(j), &
+                    !                        real(k),curx0, cury0, curz0)
+                    cury0=cury(i,j,k)
+                    temporary1(nx,ny,nz)=real(cury0,4)
+                 case('jz')
+                    !                   call interpolcurrent(real(i),real(j), &
+                    !                        real(k),curx0, cury0, curz0)
+                    curz0=curz(i,j,k)
+                    temporary1(nx,ny,nz)=real(curz0,4)
+                 case('ken','v3x','v3y','v3z','v4x','v4y','v4z',&
+                      'keni','v3xi','v3yi','v3zi','v4xi','v4yi','v4zi')
+                    temporary1(nx,ny,nz)=real(curx(i,j,k),4)
+                 end select
+ 
+              enddo
+           enddo
+        enddo
+        
+
+#ifdef serIO
+        !
+        ! Serial writing
+        !
+        if (rank.eq.0.and.debug) print *,"serial writing of .tot. files"
+
+        do procn=0,size0-1
+
+           if (rank .eq. 0) then
+              if (procn .eq. 0) then
+                 call h5dcreate_f(file_id,varname,H5T_NATIVE_REAL, &
+                      filespace(iv),dset_id(iv), error)
+                 call h5dclose_f(dset_id(iv), error)
+              endif
+           endif
+           
+           ! Determine which processors should write to file
+           saverank=.true.
+           if (mx1list(procn+1)*my1list(procn+1)*mz1list(procn+1) .eq. 0) then
+              saverank=.false.
+           endif
+
+           ! write only if saverank eq. .true.
+           if (saverank) then
+              
+           if (rank .eq. 0) then
+              
+              if (procn .ne. 0) then !receive from procn                                
+#ifdef MPI
+                 call MPI_Recv(temporary0(1:mx1list(procn+1),1:my1list(procn+1), &
+                      1:mz1list(procn+1)),mx1list(procn+1)*my1list(procn+1) &
+                      *mz1list(procn+1),mpi_real,procn,1, &
+                      MPI_COMM_WORLD,status,error)
+#endif
+              else           !procn eq 0
+                 temporary0(1:mx1,1:my1,1:mz1)=temporary1               
+              endif
+              
+              !     computing the offset
+              count(1) = mx1list(procn+1)
+              count(2) = my1list(procn+1)
+              count(3) = mz1list(procn+1)
+              
+              offset(1) = 0
+              offset(2) = 0
+              offset(3) = 0
+#ifndef twoD
+              !     z offset
+              if(procn/(sizex*sizey) .gt. 0) then 
+                 offset(3)=sum(mz1list(1:procn/(sizex*sizey)*(sizex*sizey):(sizex*sizey)))
+              endif
+#else
+              offset(3)=0
+#endif
+              !     y offset
+              if(modulo(procn,sizex*sizey)/sizex .gt. 0) then 
+                 offset(2)=sum(my1list(1:modulo(procn,sizex*sizey)/sizex*sizex:sizex))
+              endif
+              
+              !     x offset
+              if(modulo(procn,sizex) .gt. 0) then 
+                 offset(1)=sum(mx1list((procn/sizex)*sizex+1:procn))
+              endif   
+              
+              !hyperslab selection
+#ifdef MPI
+              ! this is necessay only if I close the filespace above      
+              !               call h5dget_space_f(dset_id(iv), filespace(iv), error)               
+              call h5sselect_hyperslab_f(filespace(iv),H5S_SELECT_SET_F &
+                   ,offset,count,error)
+#endif               
+              
+              !memory space
+#ifdef MPI
+              call h5screate_simple_f(datarank, count, memspace, error) 
+#endif              
+              
+              !create or open the dataset
+              call h5dopen_f(file_id,varname,dset_id(iv),error)
+              
+
+              !writing
+              if(debug)print *,rank,": before h5dwrite","filespace", &
+                   filespace(iv),"memspace",memspace
+              
+#ifdef MPI
+              call h5dwrite_f(dset_id(iv), H5T_NATIVE_REAL,  &
+                   temporary0(1:mx1list(procn+1),1:my1list(procn+1), &
+                   1:mz1list(procn+1)),dimsfi,error,mem_space_id= &
+                   memspace,file_space_id = filespace(iv))
+
+             ! call h5dwrite_f(dset_id(iv), H5T_NATIVE_REAL,  &
+             !      temporary0(1:mx1list(procn+1),1:my1list(procn+1), &
+             !      1:mz1list(procn+1)),dimsfi,error,mem_space_id= &
+             !      memspace,file_space_id = filespace(iv))
+
+
+            !               call h5dwrite_real_1(dset_id(iv), H5T_NATIVE_REAL, 
+              !     &                   temporary0(:,:,:),dimsfi,error,file_space_id = 
+              !     &                   filespace(iv), mem_space_id=memspace)
+#else
+              call h5dwrite_f(dset_id(iv),H5T_NATIVE_REAL, &
+                   temporary(:,:,:) ,dimsfi,error)
+#endif 
+              
+              !closing dataset and memory space
+              if(debug)print *, rank, ": ", iv, "closing d"
+              call h5dclose_f(dset_id(iv), error)
+              if(debug)print *, rank, ": ", "closing m"
+              call h5sclose_f(memspace, error)
+
+           else !rank ne 0
+              
+              if (procn .eq. rank) then
+#ifdef MPI
+                 call MPI_Send(temporary1,mx1*my1 &
+                      *mz1,mpi_real,0,1, &
+                      MPI_COMM_WORLD,error) 
+#endif             
+              endif
+              
+           endif !rank ne 0
+              
+           endif !saverank .eq. .true.
+           
+        enddo!procn
+        
+#else 
+! finished serial writing
+
+        !
+        ! Parallel writing
+        !     
+        if (rank.eq.0.and.debug) print *,"parallel writing of .tot. files"
+           
+        ! Determine which processors should write to file
+        saverank=.true.
+        if (my1*mz1 .eq. 0) then
+           saverank=.false.
+        endif
+
+        !
+        ! Create the dataset with default properties
+        !
+        call h5dcreate_f(file_id, varname, H5T_NATIVE_REAL, &
+             filespace(iv),dset_id(iv), error)
+        call h5sclose_f(filespace(iv), error)
+        call h5dget_space_f(dset_id(iv), filespace(iv), error)
+
+        !
+        ! Create property list for collective dataset write
+        !
+#ifdef MPI
+        call h5pcreate_f(H5P_DATASET_XFER_F, plist_id, error) 
+        call h5pset_dxpl_mpio_f(plist_id, H5FD_MPIO_COLLECTIVE_F, error)
+#endif
+           
+        !
+        ! Each process defines dataset in memory and writes it to the hyperslab
+        ! in the file. 
+        !
+        count(1) = mx1
+        count(2) = my1
+        count(3) = mz1
+  
+        offset(1) = 0
+        offset(2) = 0
+        offset(3) = 0
+#ifndef twoD
+        !z offset
+       if(rank/(sizex*sizey) .gt. 0) then 
+             offset(3)=sum(mz1list(1:rank/(sizex*sizey)*(sizex*sizey):(sizex*sizey)))
+       endif
+#else
+        offset(3)=0
+#endif
+       !     y offset
+       if(modulo(rank,sizex*sizey)/sizex .gt. 0) then 
+             offset(2)=sum(my1list(1:modulo(rank,sizex*sizey)/sizex*sizex:sizex))
+       endif
+              
+       !     x offset
+       if(modulo(rank,sizex) .gt. 0) then 
+            offset(1)=sum(mx1list((rank/sizex)*sizex+1:rank))
+       endif 
+        
+        ! write only if saverank .eq. .true.
+        if (saverank) then
+
+#ifdef MPI
+        call h5screate_simple_f(datarank, count, memspace, error) 
+#endif
+        
+        ! 
+        ! Select hyperslab in the file.
+        !
+#ifdef MPI              
+        call h5sselect_hyperslab_f(filespace(iv),H5S_SELECT_SET_F,offset &
+             ,count, error)
+#endif
+        
+        if(debug)print *,rank,": before h5dwrite","filespace",filespace(iv &
+             ),memspace
+        
+#ifdef MPI
+       ! call h5dwrite_real_1(dset_id(iv), H5T_NATIVE_REAL, temporary1(:,: &
+       !      ,:),dimsfi,error,file_space_id = filespace(iv), mem_space_id &
+       !      =memspace,xfer_prp = h5p_default_f)
+
+        call h5dwrite_f(dset_id(iv), H5T_NATIVE_REAL, temporary1(:,: &
+             ,:),dimsfi,error,file_space_id = filespace(iv), mem_space_id &
+             =memspace,xfer_prp = h5p_default_f)
+
+#else
+        call h5dwrite_f(dset_id(iv),H5T_NATIVE_REAL,TEMPORARY1(:,: &
+             ,:) ,dimsfi,error)
+#endif      
+        endif ! saverank .eq. .true.
+     
+#endif 
+ !finished parallel writing    
+        
+
+        !
+        !Closing dataset and dataspace    
+        !
+!#ifdef serIO    
+!        if (rank .eq. 0) then
+!           if(debug)print *, rank, ": ", iv, "closing d"
+!           call h5dclose_f(dset_id(iv), error)
+!#ifdef MPI
+!           if(debug)print *, rank, ": ", iv, "closing s" 
+!           call h5sclose_f(filespace(iv), error)
+!#endif
+!        endif
+!#else
+!        if(debug)print *, rank, ": ", iv, "closing d"
+!        call h5dclose_f(dset_id(iv), error)
+!#ifdef MPI
+!        if(debug)print *, rank, ": ", iv, "closing s" 
+!        call h5sclose_f(filespace(iv), error)     
+!#endif
+!#endif
+
+!     enddo!nvars
+
+
+        !
+        !Closing dataset and dataspace    
+        !
+#ifdef serIO    
+        if (rank .eq. 0) then
+#ifdef MPI
+           if(debug)print *, rank, ": ", iv, "closing s" 
+           call h5sclose_f(filespace(iv), error)
+#endif
+        endif
+#else
+        if(debug)print *, rank, ": ", iv, "closing d"
+        call h5dclose_f(dset_id(iv), error)
+#ifdef MPI
+        if(debug)print *, rank, ": ", iv, "closing s" 
+        call h5sclose_f(filespace(iv), error)     
+#endif
+#endif
+
+     enddo!nvars
+
+
+     
+     
+     !
+     ! Closing memory space, file and hdf5
+     !
+!#ifdef serIO
+!     if (rank .eq. 0) then
+!#ifdef MPI
+!        if (saverank) then
+!           if(debug)print *, rank, ": ", "closing m"
+!           call h5sclose_f(memspace, error)
+!        endif ! saverank .eq. .true.
+!#endif
+!        if(debug)print *, rank, ": ", "closing f"
+!        call h5fclose_f(file_id, error)
+!        if(debug)print *, rank, ": ", "closing h5"
+!        call h5close_f(error)
+!        deallocate(temporary0)
+!     endif
+!#else
+!#ifdef MPI
+!     if (saverank) then
+!        if(debug)print *, rank, ": ", "closing m"
+!        call h5sclose_f(memspace, error)
+!     endif !saverank .eq. .true.
+!     if(debug)print *, rank, ": ", "closing p"
+!     call h5pclose_f(plist_id, error)
+!#endif
+!     if(debug)print *, rank, ": ", "closing f"
+!     call h5fclose_f(file_id, error)
+!     if(debug)print *, rank, ": ", "closing h5"
+!     call h5close_f(error)    
+!#endif
+     
+!     if(debug) print *, rank,": finished writing .tot. fields"
+     
+!     deallocate(temporary1)
+
+
+
+     !
+     ! Closing memory space, file and hdf5
+     !
+#ifdef serIO
+     if (rank .eq. 0) then
+        if(debug)print *, rank, ": ", "closing f"
+        call h5fclose_f(file_id, error)
+        if(debug)print *, rank, ": ", "closing h5"
+        call h5close_f(error)
+        deallocate(temporary0)
+     endif
+#else
+#ifdef MPI
+     if (saverank) then
+        if(debug)print *, rank, ": ", "closing m"
+        call h5sclose_f(memspace, error)
+     endif !saverank .eq. .true.
+     if(debug)print *, rank, ": ", "closing p"
+     call h5pclose_f(plist_id, error)
+#endif
+     if(debug)print *, rank, ": ", "closing f"
+     call h5fclose_f(file_id, error)
+     if(debug)print *, rank, ": ", "closing h5"
+     call h5close_f(error)    
+#endif
+     
+     if(debug) print *, rank,": finished writing .tot. fields"
+     
+     deallocate(temporary1)
+
+
+
+!---------------------------------------------------------------
+!     goto 127
+     !--------------------------------------
+     ! PRTL.TOT. saving: now write particles
+     !--------------------------------------
+     if (rank.eq.0)print *,"",fnameprt
+
+     !user input: number of variables to be saved for prtl.tot.
+     nvars=21
+     midvars=nvars/2
+
+     !user input: array of variables to be saved for prtl.tot.
+     !usage:
+     !-the first entry should have the largest number of characters
+     !(if needed, supplemented with empty spaces)
+     !-same number of entries for electrons and ions
+     !to be chosen from:
+     !xi,yi,zi,xe,ye,ze:position
+     !ui,vi,wi,ue,ve,we:4-velocity (momentum)
+     !chi,che:weight
+     !gammai,gammae:energy
+     !indi,inde:index
+     !proci,proce:processor
+     dsetname(1:nvars)=(/&
+          'gammai','xi    ','yi    ','zi    '&
+          ,'ui    ','vi    ','wi    '&
+          ,'chi   ','indi  ','proci '&
+          ,'gammae','xe    ','ye    ','ze    '&
+          ,'ue    ','ve    ','we    '&
+          ,'che   ','inde  ','proce ','time  '&
+          /)
+     
+     !find out number of ions and lecs
+      datarank=1  
+#ifdef MPI
+     tmp1=max(ions,1)
+     call mpi_allgather(tmp1,1,mpi_integer,all_ions,1 &
+          ,mpi_integer,mpi_comm_world, error)
+     tmp1=max(lecs,1)
+     call mpi_allgather(tmp1,1,mpi_integer,all_lecs,1, &
+          mpi_integer,mpi_comm_world, error)
+     if(rank.eq.0.and.debug)print *,"all_ions",all_ions,tmp1 
+     all_ions_lng=all_ions
+     all_lecs_lng=all_lecs
+#else
+     all_ions_lng=ions
+     all_lecs_lng=lecs
+#endif    
+     where(all_ions .lt. stride)all_ions=stride
+     where(all_lecs .lt. stride)all_lecs=stride
+     where(all_ions_lng .lt. stride)all_ions_lng=stride
+     where(all_lecs_lng .lt. stride)all_lecs_lng=stride
+     dimsfions(1)=sum(all_ions_lng/stride)
+     dimsflecs(1)=sum(all_lecs_lng/stride)
+     dimsfiions(1)=dimsfions(1)
+     dimsfilecs(1)=dimsflecs(1)
+     dimsfiions(2:7)=0
+     dimsfilecs(2:7)=0
+     if(rank .eq. 0 .and. debug) then 
+        print *, "all_ions", all_ions_lng
+        print *, "all_lecs", all_lecs_lng
+        print *,"dimsions", sum(all_ions_lng/stride)
+        print *,"dimslecs", sum(all_lecs_lng/stride)
+     endif
+        ! allocate arrays
+     allocate(temporary_vec(max(max(ions/stride,lecs/stride),1)))       
+#ifdef serIO
+     if (rank .eq. 0) then
+        allocate(temporary0_vec(max(maxval(all_ions_lng/stride), &
+             maxval(all_lecs_lng/stride))))
+        temporary0_vec(:)=0.
+     endif
+#endif  
+     !
+     !  Initialize FORTRAN predefined datatypes
+     !
+#ifdef serIO
+     if (rank .eq. 0) then
+        call h5open_f(error)
+     endif
+#else
+     call h5open_f(error) 
+#endif
+     
+     ! 
+     ! Setup file access property list with parallel I/O access.
+     !     
+#ifdef MPI
+#ifndef serIO
+     call h5pcreate_f(H5P_FILE_ACCESS_F, plist_id, error)
+     !      call H5Pset_sieve_buf_size_f(plist_id, 262144,error) 
+     !      call H5Pset_alignment_f(plist_id, 524288, 262144,error)
+     call h5pset_fapl_mpio_f(plist_id, mpi_comm_world, &
+          FILE_INFO_TEMPLATE,error)
+#endif
+#endif
+
+     !
+     ! Create the file
+     ! 
+#ifdef MPI
+#ifdef serIO
+     if (rank .eq. 0) then
+        call h5fcreate_f(fnameprt, H5F_ACC_TRUNC_F, file_id, error, &
+             h5p_default_f,h5p_default_f)
+     endif
+#else
+     call h5fcreate_f(fnameprt, H5F_ACC_TRUNC_F, file_id, error, &
+          access_prp = plist_id)
+     call h5pclose_f(plist_id, error)
+#endif
+#else
+     call h5fcreate_f(fnameprt, H5F_ACC_TRUNC_F, file_id, error)
+#endif      
+          
+     !
+     ! Create the data space for the  dataset. 
+     !     
+#ifdef serIO
+     if (rank .eq. 0) then
+        do i=1,midvars
+           call h5screate_simple_f(datarank, dimsfions(1), filespace(i), &
+                error)
+        enddo
+        do i=midvars+1,nvars
+           call h5screate_simple_f(datarank, dimsflecs(1), filespace(i), &
+                error)
+        enddo
+     endif
+#else
+     do i=1,midvars
+        call h5screate_simple_f(datarank, dimsfions(1), filespace(i), &
+             error)
+     enddo
+     do i=midvars+1,nvars
+        call h5screate_simple_f(datarank, dimsflecs(1), filespace(i), &
+             error)
+     enddo
+#endif
+     
+     !
+     ! Create property list for collective dataset write
+     !
+#ifndef serIO
+#ifdef MPI
+     call h5pcreate_f(H5P_DATASET_XFER_F, plist_id, error) 
+     call h5pset_dxpl_mpio_f(plist_id, H5FD_MPIO_COLLECTIVE_F, error)
+#endif
+#endif
+     
+     
+     !looping nvars
+     do i=1,nvars
+
+        varname=trim(dsetname(i))
+        
+        !define temporary_vec for every proc
+        temporary_vec=0.
+        !IONS
+        if(varname.eq.'xi') temporary_vec(1:ions/stride)=p(1:ions:stride)%x &
+        	 +mxcum
+        if(varname.eq.'yi') temporary_vec(1:ions/stride)=p(1:ions:stride)%y &
+             +mycum
+        if(varname.eq.'zi') temporary_vec(1:ions/stride)=p(1:ions:stride)%z &
+        	 +mzcum
+        if(varname.eq.'ui') temporary_vec(1:ions/stride)=p(1:ions:stride)%u
+        if(varname.eq.'vi') temporary_vec(1:ions/stride)=p(1:ions:stride)%v
+        if(varname.eq.'wi') temporary_vec(1:ions/stride)=p(1:ions:stride)%w    
+        if(varname.eq.'chi') temporary_vec(1:ions/stride)=p(1:ions:stride)%ch
+        if(varname.eq.'gammai') temporary_vec(1:ions/stride)=sqrt(1. &
+             +(p(1:ions:stride)%u**2+p(1:ions:stride)%v**2 &
+             +p(1:ions:stride)%w**2))
+        if(varname.eq.'indi') temporary_vec(1:ions/stride)=real(p(1:ions:stride) &
+             %ind,4)
+        if(varname.eq.'proci') temporary_vec(1:ions/stride)=real(p(1:ions:stride) &
+             %proc,4)
+        !ELECTRONS        
+        if(varname.eq.'xe') temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
+             +lecs:stride)%x+mxcum
+        if(varname.eq.'ye') temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
+             +lecs:stride)%y+mycum
+        if(varname.eq.'ze') temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
+             +lecs:stride)%z+mzcum
+        if(varname.eq.'ue') temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
+             +lecs:stride)%u
+        if(varname.eq.'ve') temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
+             +lecs:stride)%v
+        if(varname.eq.'we') temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf &
+             +lecs:stride)%w
+        if(varname.eq.'che') temporary_vec(1:lecs/stride)=p(maxhlf+1:maxhlf+lecs:stride)%ch
+        if(varname.eq.'gammae') temporary_vec(1:lecs/stride)=sqrt(1. +(p(maxhlf &
+             +1:maxhlf+lecs:stride)%u**2+p(maxhlf+1:maxhlf +lecs:stride &
+             )%v**2+p(maxhlf +1:maxhlf+lecs:stride)%w**2))
+        if(varname.eq.'inde')temporary_vec(1:lecs/stride)=real(p(maxhlf+1:maxhlf &
+             +lecs:stride)%ind,4)
+        if(varname.eq.'proce')temporary_vec(1:lecs/stride)=real(p(maxhlf+1:maxhlf &
+             +lecs:stride)%proc,4)
+        
+#ifdef serIO
+        !
+        ! Serial writing of prtl.tot.
+        !        
+
+        do procn=0,size0-1
+           
+           if (rank .eq. 0) then
+              
+              if (procn .ne. 0) then !receive from procn                                
+#ifdef MPI
+                 if(i .le. midvars) then
+                    call MPI_Recv(temporary0_vec(1:all_ions_lng(procn+1)/stride) &
+                         ,all_ions_lng(procn+1)/ &
+                         stride,mpi_real,procn,1, &
+                         MPI_COMM_WORLD,status,error)
+                 else
+                    call MPI_Recv(temporary0_vec(1:all_lecs_lng(procn+1)/stride) &
+                         ,all_lecs_lng(procn+1)/ &
+                         stride,mpi_real,procn,1, &
+                         MPI_COMM_WORLD,status,error)
+                 endif
+#endif
+              else           !procn eq 0
+                 if (i .le. midvars) then
+                    temporary0_vec(1:all_ions_lng(1)/stride)= &
+                         temporary_vec(1:all_ions_lng(1)/stride)   
+                 else
+                    temporary0_vec(1:all_lecs_lng(1)/stride)= &
+                         temporary_vec(1:all_lecs_lng(1)/stride)  
+                 endif         
+              endif
+              
+              !define count and offset
+              if(i.le.midvars)countpart = max(all_ions_lng(procn+1)/ &
+                   stride,1)
+              if(i.gt.midvars)countpart = max(all_lecs_lng(procn+1)/ &
+                   stride,1)
+              
+              offsetpart = 0
+              if(procn .gt. 0) then 
+                 if(i .le. midvars) then
+                    offsetpart = sum(all_ions_lng(1:procn)/stride)
+                 else
+                    offsetpart = sum(all_lecs_lng(1:procn)/stride)
+                 endif
+              endif
+              
+              
+              !hyperslab selection
+#ifdef MPI
+              ! this is necessary only if I close the filespace above      
+              !               call h5dget_space_f(dset_id(i), filespace(i), error)               
+              call h5sselect_hyperslab_f(filespace(i),H5S_SELECT_SET_F &
+                   ,offsetpart,countpart,error)
+#endif               
+              
+              if(debug)print *,rank,": selected hyperslab"
+              
+              
+              !memory space
+#ifdef MPI
+              call h5screate_simple_f(1, countpart, memspace, error) 
+#endif
+                            
+              !dataset creation/opening
+              if (procn .eq. 0) then
+                 call h5dcreate_f(file_id,varname,H5T_NATIVE_REAL, &
+                      filespace(i),dset_id(i), error)
+              else 
+                 call h5dopen_f(file_id,varname,dset_id(i),error)
+              endif
+              
+              
+              !writing
+#ifdef MPI
+              if(i .le. midvars) then
+                 !intel compiler bug mem_space and file_space ids cannot be defined inline infunction MKG 25/1/2019
+
+                 file_space_id = filespace(i)
+                 mem_space_id=memspace
+                 !call h5dwrite_real_1(dset_id(i), H5T_NATIVE_REAL, &
+                 !     temporary0_vec(1:all_ions_lng(procn+1)/stride),  &
+                 !     dimsfiions,error,file_space_id,  &
+                 !     mem_space_id)
+
+                 call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
+                      temporary0_vec(1:all_ions_lng(procn+1)/stride),  &
+                      dimsfiions,error,file_space_id,  &
+                      mem_space_id)
+
+              else
+                 !intel compiler bug mem_space and file_space ids cannot be defined inline infunction MKG 25/1/2019
+                 file_space_id = filespace(i)
+                 mem_space_id=memspace
+                 !call h5dwrite_real_1(dset_id(i), H5T_NATIVE_REAL, &
+                 !     temporary0_vec(1:all_lecs_lng(procn+1)/stride),  &
+                 !     dimsfilecs,error,file_space_id,  &
+                 !     mem_space_id)
+
+                 call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
+                      temporary0_vec(1:all_lecs_lng(procn+1)/stride),  &
+                      dimsfilecs,error,file_space_id,  &
+                      mem_space_id)
+
+              endif
+              
+#else
+              if(i .le. midvars) then 
+                 call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
+                      temporary_vec(1:max(ions/stride,1)),  &
+                      dimsfiions,error)
+              else 
+                 call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
+                      temporary_vec(1:max(lecs/stride,1)),  &
+                      dimsfilecs,error)
+              endif
+#endif
+              
+              
+              !closing dataset and memory space
+              if(debug)print *, rank, ": ", i, "closing d"
+              call h5dclose_f(dset_id(i), error)
+              if(debug)print *, rank, ": ", i, "closing m"
+              call h5sclose_f(memspace, error)
+              
+           else !rank ne 0
+              if (procn .eq. rank) then
+#ifdef MPI
+                 if(i .le. midvars) then
+                    call MPI_Send(temporary_vec,all_ions_lng(procn+1)/ &
+                         stride,mpi_real,0,1, &
+                         MPI_COMM_WORLD,error)
+                 else
+                    call MPI_Send(temporary_vec,all_lecs_lng(procn+1)/ &
+                         stride,mpi_real,0,1, &
+                         MPI_COMM_WORLD,error)
+                 endif
+#endif       
+              endif
+           endif               !rank ne 0
+           
+        enddo!procn
+!else (finished serial writing)        
+#else 
+        !
+        ! Parallel writing of prtl.tot.
+        !
+
+        !
+        ! Create the dataset with default properties.
+        !        
+        call h5dcreate_f(file_id,varname, H5T_NATIVE_REAL, &
+             filespace(i),dset_id(i), error)
+        call h5sclose_f(filespace(i), error)
+
+        !
+        ! Each process defines dataset in memory and writes it to the hyperslab
+        ! in the file. 
+        !
+        if(i.le.midvars)countpart = max(ions/stride,1)
+        if(i.gt.midvars)countpart = max(lecs/stride,1)
+        
+        offsetpart = 0
+        if(rank .gt. 0) then 
+           if(i .le. midvars) then
+              offsetpart = sum(all_ions_lng(1:rank)/stride)
+           else
+              offsetpart = sum(all_lecs_lng(1:rank)/stride)
+           endif
+        endif
+        
+#ifdef MPI
+        call h5screate_simple_f(1, countpart, memspace, error)         
+        call h5dget_space_f(dset_id(i), filespace(i), error)        
+        call h5sselect_hyperslab_f(filespace(i),H5S_SELECT_SET_F &
+             ,offsetpart,countpart, error)        
+#endif
+        
+#ifdef MPI
+        if(i .le. midvars) then 
+           !call h5dwrite_real_1(dset_id(i), H5T_NATIVE_REAL, &
+           !     temporary_vec(1:max(ions/stride,1)), dimsfiions,error &
+           !     ,file_space_id = filespace(i), mem_space_id=memspace &
+           !     ,xfer_prp = h5p_default_f)
+
+           call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
+                temporary_vec(1:max(ions/stride,1)), dimsfiions,error &
+                ,file_space_id = filespace(i), mem_space_id=memspace &
+                ,xfer_prp = h5p_default_f)
+
+        else 
+           !call h5dwrite_real_1(dset_id(i), H5T_NATIVE_REAL, &
+           !     temporary_vec(1:max(lecs/stride,1)), dimsfilecs,error &
+           !     ,file_space_id = filespace(i), mem_space_id=memspace &
+           !     ,xfer_prp = h5p_default_f)
+
+           call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
+                temporary_vec(1:max(lecs/stride,1)), dimsfilecs,error &
+                ,file_space_id = filespace(i), mem_space_id=memspace &
+                ,xfer_prp = h5p_default_f)
+
+        endif
+        
+#else
+        if(i .le. midvars) then 
+           call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
+                temporary_vec(1:max(ions/stride,1)), dimsfiions,error)
+        else 
+           call h5dwrite_f(dset_id(i), H5T_NATIVE_REAL, &
+                temporary_vec(1:max(lecs/stride,1)), dimsfilecs,error)
+        endif
+#endif
+        
+	if(debug)print *, rank, ": ", i, "closing m"
+#ifdef MPI
+        call h5sclose_f(memspace,error)
+#endif
+        if(debug)print *, rank, ": ", i, "closing d"
+        call h5dclose_f(dset_id(i), error)
+!endif finished parallel writing
+#endif 
+       
+        
+        !
+        ! Close dataspaces.
+        !
+        if(debug)print *, rank, ": ", i, "closing s" 
+#ifdef MPI
+#ifdef serIO    
+        if (rank .eq. 0) then
+           call h5sclose_f(filespace(i), error)
+        endif
+#else
+        call h5sclose_f(filespace(i), error)
+#endif
+#endif
+        
+     enddo!nvars
+
+     
+#ifdef serIO
+     if (rank .eq. 0) then
+        if(debug)print *, rank, ": ", "closing f"
+        call h5fclose_f(file_id, error)
+        if(debug)print *, rank, ": ", "closing h5"
+        call h5close_f(error)
+        deallocate(temporary0_vec)
+     endif
+#else
+     if(debug)print *, rank, ": ", "closing p"
+#ifdef MPI
+     call h5pclose_f(plist_id, error)
+#endif
+     if(debug)print *, rank, ": ", "closing f"
+     call h5fclose_f(file_id, error)
+     if(debug)print *, rank, ": ", "closing h5"
+     call h5close_f(error)
+#endif
+     
+     if(debug) print *, rank,": finished writing particles"
+     
+     deallocate(temporary_vec)
+
+127  continue
+     
+#ifdef MPI
+#ifndef serIO
+     call MPI_Info_free(FILE_INFO_TEMPLATE,error)
+#endif
+#endif
+		
+     
+  endif !if lap ge pltstart
+	
+	
+end subroutine output_tot
+
+
+
+!-------------------------------------------------------------------------------
+! 						subroutine output_hug					 
+!														
+! Save flds.hug. files for fluid data with different spatial resolution  					
+!
+!-------------------------------------------------------------------------------
+subroutine output_hug()
+ 
+  implicit none
+  
+  ! local variables
+  integer ::ind,kglob,kloc,kstart,kfinish,nz,info,n,i,j,k,ierr
+  integer ::jstart,jfinish,ny,iv,mz1,my1,mx1
+  real bx0,by0,bz0,ex0,ey0,ez0,bxd,byd,bzd,exd,eyd,ezd,curx0, &
+       cury0,curz0
+  integer ::error ! Error flags
+  integer ::nvars !, midvars
+!  integer ::all_ions(size0), all_lecs(size0)
+!  integer*8 all_ions_lng(size0), all_lecs_lng(size0)
+  character(len=6) :: dsetname(40), varname  
+  integer ::datarank
+#ifdef HDF5
+  integer(HID_T) :: file_id ! File identifier 
+  integer(HID_T) :: dset_id(40) ! Dataset identifier 
+  integer(HID_T) :: filespace(40) ! Dataspace identifier in file 
+  integer(HID_T) :: memspace ! Dataspace identifier in memory
+  integer(HID_T) :: plist_id ! Property list identifier
+  integer(HSIZE_T) dimsf(3)
+  integer(HSIZE_T) dimsfi(7)
+  integer(HSIZE_T), DIMENSION(3) :: count  
+  integer(HSSIZE_T), DIMENSION(3) :: offset
+#endif 
+  integer ::FILE_INFO_TEMPLATE !for MPI file info
+  integer ::procn
+  integer ::my1list(size0),mz1list(size0) 
+  real*4, allocatable :: temporary0(:,:,:)!, temporary0_vec(:)   
+  integer :: status(MPI_STATUS_SIZE)
+  integer ::istep0
+  logical :: saverank
+  integer ::token,request,status2(MPI_STATUS_SIZE),request1 &
+      ,status1(MPI_STATUS_SIZE)
+  logical :: writecurr
+  
+  !user input: array of variables to be saved for flds.hug.
+  !usage:
+  !-the first entry should have the largest number of characters
+  !(if needed, supplemented with empty spaces)
+  !to be chosen from:
+  !dens,densi: density and density of ions
+  !ex,ey,ez,bx,by,bz,jx,jy,jz:fields and currents
+  !v3x,v3xi,v3y,v3yi,v3z,v3zi:3-velocity
+  !v4x,v4xi,v4y,v4yi,v4z,v4zi:4-velocity (momentum)
+  !ken,keni:particle total energy
+#ifdef twoD
+  if (sigma .eq. 0. .and. pcosthmult .eq. 0) then 
+     nvars=4
+     dsetname(1:nvars)=(/&
+          'dens  ','ex    ','ey    ','bz    '/)
+  else
+     nvars=7
+     dsetname(1:nvars)=(/&
+          'dens  ','ex    ','ey    ','ez    ','bx    ','by    ','bz    '/)
+  endif
+#else
+  nvars=7
+  dsetname(1:nvars)=(/&
+       'dens  ','ex    ','ey    ','ez    ','bx    ','by    ','bz    '/)
+#endif
+  
+  istep0=istep
+
+  if(lap .ge.pltstart .and. modulo((lap-pltstart),torqint) .eq.0)then
+
+     istep=istep1
+     
+     !timestamp of the saved output
+     ind=(lap-pltstart)/torqint	    
+     write(fnamefld,"(a16,i3.3)") "output/flds.hug.",ind     
+     write(indchar,"(i3.3)")ind     
+     if (rank.eq.0)print *,"",fnamefld
+     
+     !just in case destroy the file
+     if(rank .eq. 0) then 
+        open(unit=11,file=fnamefld,form='unformatted')
+        close(11,status='delete')
+     endif
+     
+     call MPI_BARRIER(MPI_COMM_WORLD,ierr)     
+
+     
+     !specify FILE_INFO_TEMPLATE for parallel output
+#ifndef serIO 
+#ifdef MPI     
+     call MPI_Info_create(FILE_INFO_TEMPLATE,error)
+     call MPI_Info_set(FILE_INFO_TEMPLATE, "access_style",  &
+          "write_once",error)
+     call MPI_Info_set(FILE_INFO_TEMPLATE,  &
+          "collective_buffering", "true",error)
+     call MPI_Info_set(FILE_INFO_TEMPLATE, "cb_block_size", &
+          "4194304",error)
+     call MPI_Info_set(FILE_INFO_TEMPLATE, "cb_buffer_size", &
+          "16777216",error)
+     call MPI_Info_set(FILE_INFO_TEMPLATE, "cb_nodes", &
+          "1",error)
+#endif
+#endif
+
+
+     !FLDS.HUG. saving
+
+     !compute global size of fluid arrays to be saved
+     dimsf(1)=mx0/istep
+     dimsf(2)=my0/istep  
+#ifndef twoD
+     dimsf(3)=mz0/istep
+#else
+     dimsf(3)=1
+#endif 
+     dimsfi(1:3)=dimsf(1:3)
+     dimsfi(4:7)=0
+     datarank=3
+     
+     
+     !computing my1 and mz1 for each processor
+     kstart=3
+     kfinish=mz-3
+     if(rank/sizey .eq. 0) kstart=1
+     if(rank/sizey .eq. sizez-1) kfinish=mz
+     
+1110  if(modulo(kstart+(rank/sizey)*(mzall-5)-1*0,istep) .eq. 0) goto 1120
+     kstart=kstart+1
+     goto 1110
+1120  continue
+     
+1130  if(modulo(kfinish+(rank/sizey)*(mzall-5)-1*0,istep) .eq. 0) goto 1140
+     kfinish=kfinish-1
+     goto 1130
+1140  continue
+     
+     mz1=(kfinish-kstart)/istep+1
+#ifdef twoD
+     kstart=1
+     kfinish=1
+     mz1=1
+#endif
+     
+     jstart=3
+     jfinish=my-3
+     if(modulo(rank,sizey) .eq. 0) jstart=1
+     if(modulo(rank,sizey) .eq. sizey-1) jfinish=my
+     
+1210  if(modulo(jstart+modulo(rank,sizey)*(myall-5)-1*0,istep) .eq. 0) goto 1220
+     jstart=jstart+1
+     goto 1210
+1220  continue
+     
+1230  if(modulo(jfinish+modulo(rank,sizey)*(myall-5)-1*0,istep) .eq. 0)  goto 1240
+     jfinish=jfinish-1
+     goto 1230
+1240  continue
+     
+     my1=(jfinish-jstart)/istep+1
+  
+! determine whether the current processor should save any cell
+     if (kfinish .lt. kstart) then
+        kfinish=1
+        kstart=1
+        mz1=0
+     endif
+     if (jfinish .lt. jstart) then
+        jfinish=1
+        jstart=1
+        my1=0
+     endif
+   
+     
+     !allocate temporary1 on every processor
+     if(debug) print *, rank,"in output b4 allocate"
+     allocate(temporary1(mx0/istep,max(my1,1),max(mz1,1)))
+
+
+     !getting information about the size of temporary1
+#ifdef MPI
+     if(debug) print *, rank,": in output, b4 allgather", my1
+     call mpi_allgather(my1,1,mpi_integer,my1list,1,mpi_integer &
+          ,mpi_comm_world, error)
+     if(debug) print *, rank,": in output, b4 allgather", mz1
+     call mpi_allgather(mz1,1,mpi_integer,mz1list,1,mpi_integer &
+          ,mpi_comm_world, error) 
+#ifdef serIO       
+     if (rank .eq. 0) then
+        allocate(temporary0(mx0/istep,maxval(my1list), &
+             maxval(mz1list)))
+        temporary0(:,:,:)=0.
+     endif
+#endif
+#endif
+
+!decide if I need to write currents to disk
+     writecurr=.false.
+     do iv=1,nvars
+        varname=trim(dsetname(iv))
+        if (varname .eq. 'jx' .or. varname .eq. 'jy') writecurr=.true. 
+     enddo
+     
+     if (writecurr) then
+
+        !install a semaphore        
+#ifdef MPI
+        if(rank .gt. 0) then 
+           token=rank-1
+           !wait for the message from the previous rank
+           call mpi_irecv(token,1, &
+                mpi_integer,rank-1,100,MPI_Comm_WORLD,request,ierr)
+           call mpi_wait(request,status2,ierr)
+           
+           if (debug)print *,"rank ",rank," received the token from ",rank-1
+           
+           if(modulo(rank,15).ne.0 .and. rank .ne. size0-1) then
+              token=rank
+              call mpi_isend(token,1, &
+                   mpi_integer,rank+1,100,MPI_Comm_WORLD,request1,ierr)
+              call mpi_wait(request1,status1,ierr)
+           endif
+        endif
+3004    continue
+#endif
+
+     !writing currents (all procs)
+     open(unit=7,file=fenlargeloc, form='unformatted')
+     rewind 7
+     write(7) (((curx(i,j,k),i=1,mx),j=1,my),k=1,mz), &
+          (((cury(i,j,k),i=1,mx),j=1,my),k=1,mz), &
+          (((curz(i,j,k),i=1,mx),j=1,my),k=1,mz)
+     close(7)
+
+        !send the message to the next rank, if not the last        
+#ifdef MPI
+        if(modulo(rank,15).eq.0 .and. rank .ne. size0-1) then
+           token=rank
+           call mpi_isend(token,1, &
+                mpi_integer,rank+1,100,MPI_Comm_WORLD,request,ierr)
+        endif
+2121    continue
+        
+        call mpi_barrier(MPI_COMM_WORLD,ierr)
+#endif
+
+    endif !writecurr
+     
+     !
+     !  Initialize FORTRAN predefined datatypes
+     !
+#ifdef serIO
+     if (rank .eq. 0) then
+        call h5open_f(error)
+     endif
+#else
+     call h5open_f(error) 
+#endif
+     
+     ! 
+     ! Setup file access property list if parallel I/O access.
+     !     
+#ifndef serIO
+#ifdef MPI
+     call h5pcreate_f(H5P_FILE_ACCESS_F, plist_id, error)
+     !      call H5Pset_sieve_buf_size_f(plist_id, 262144,error) 
+     !      call H5Pset_alignment_f(plist_id, 524288, 262144,error)
+     call h5pset_fapl_mpio_f(plist_id, mpi_comm_world, &
+          FILE_INFO_TEMPLATE,error)
+#endif
+#endif
+     
+     !
+     ! Create the file
+     !
+#ifdef MPI
+#ifdef serIO
+     if (rank .eq. 0) then
+        call h5fcreate_f(fnamefld, H5F_ACC_TRUNC_F, file_id, error, &
+             h5p_default_f,h5p_default_f)
+     endif
+#else
+     call h5fcreate_f(fnamefld, H5F_ACC_TRUNC_F, file_id, error, &
+          access_prp = plist_id)
+     call h5pclose_f(plist_id, error)
+#endif
+#else
+     call h5fcreate_f(fnamefld, H5F_ACC_TRUNC_F, file_id, error)
+#endif  
+
+     !
+     ! Create the dataspace for the dataset
+     !
+#ifdef serIO
+     if (rank .eq. 0) then
+        do i=1,nvars
+           call h5screate_simple_f(datarank, dimsf, filespace(i), error)
+        enddo
+     endif
+#else
+     do i=1,nvars
+        call h5screate_simple_f(datarank, dimsf, filespace(i), error)
+     enddo
+#endif
+     
+     !
+     ! Loop over variables
+     !
+     do iv=1,nvars
+
+        varname=trim(dsetname(iv))
+
+        !
+        ! Define the array
+        ! 
+        !pre-processing of some field quantities
+        !total density and ion density
+        if(varname.eq.'dens' ) call meanq_fld_cur('tdens')
+        if(varname.eq.'densi') call meanq_fld_cur('idens')
+        !velocities, momenta and energy
+        if(varname.eq.'v3x'  ) call meanq_fld_cur('tbetx')
+        if(varname.eq.'v3y'  ) call meanq_fld_cur('tbety')
+        if(varname.eq.'v3z'  ) call meanq_fld_cur('tbetz') 
+        if(varname.eq.'v3xi' ) call meanq_fld_cur('ibetx')
+        if(varname.eq.'v3yi' ) call meanq_fld_cur('ibety')
+        if(varname.eq.'v3zi' ) call meanq_fld_cur('ibetz')
+        if(varname.eq.'v4x'  ) call meanq_fld_cur('tmomx')
+        if(varname.eq.'v4y'  ) call meanq_fld_cur('tmomy')
+        if(varname.eq.'v4z'  ) call meanq_fld_cur('tmomz')
+        if(varname.eq.'v4xi' ) call meanq_fld_cur('imomx')
+        if(varname.eq.'v4yi' ) call meanq_fld_cur('imomy')
+        if(varname.eq.'v4zi' ) call meanq_fld_cur('imomz')
+        if(varname.eq.'ken'  ) call meanq_fld_cur('tener')
+        if(varname.eq.'keni' ) call meanq_fld_cur('iener')
+        !electric currents
+        if(varname.eq.'jx'.or.varname.eq.'jy'.or.varname.eq.'jz') then 
+!        if(varname.eq.'jx'.or.varname.eq.'jy') then
+           !     restore currents from file
+           open(unit=7,file=fenlargeloc, form='unformatted')
+           rewind 7
+           if(debug.and.rank.eq.0) print *, rank,":reading back current file"
+           read(7)(((curx(i,j,k),i=1,mx),j=1,my),k=1,mz), &
+                (((cury(i,j,k),i=1,mx),j=1,my),k=1,mz), &
+                (((curz(i,j,k),i=1,mx),j=1,my),k=1,mz)
+           if(debug .and. rank.eq.0)print *, rank,"resetting arrays"           
+        endif
+        
+        ! define temporary1 for every processor
+
+        do k=kstart, kfinish, istep 
+           nz=(k-kstart)/istep+1
+           do j=jstart, jfinish,istep 
+              ny=(j-jstart)/istep+1
+              do i=1,mx/istep
+       
+                 select case (varname)
+                 case('dens','densi')
+                    temporary1(i,ny,nz)=real(curx(i*istep,j,k),4)
+                 case('ex')
+                    call interpolfld(real(i*istep),real(j), &
+                         real(k),bx0,by0,bz0,ex0,ey0,ez0,bxd, &
+                         byd,bzd,exd,eyd,ezd) 
+                    temporary1(i,ny,nz)=real(ex0+exd,4)
+                 case('ey')
+                    call interpolfld(real(i*istep),real(j), &
+                         real(k),bx0,by0,bz0,ex0,ey0,ez0,bxd, &
+                         byd,bzd,exd,eyd,ezd) 
+                    temporary1(i,ny,nz)=real(ey0+eyd,4)
+                 case('bz')
+                    call interpolfld(real(i*istep),real(j), &
+                         real(k),bx0,by0,bz0,ex0,ey0,ez0,bxd, &
+                         byd,bzd,exd,eyd,ezd) 
+                    temporary1(i,ny,nz)=real(bz0+bzd,4)
+                 case('ez')
+                    call interpolfld(real(i*istep),real(j), &
+                         real(k),bx0,by0,bz0,ex0,ey0,ez0,bxd, &
+                         byd,bzd,exd,eyd,ezd) 
+                    temporary1(i,ny,nz)=real(ez0+ezd,4)
+                 case('bx')
+                    call interpolfld(real(i*istep),real(j), &
+                         real(k),bx0,by0,bz0,ex0,ey0,ez0,bxd, &
+                         byd,bzd,exd,eyd,ezd) 
+                    temporary1(i,ny,nz)=real(bx0+bxd,4)
+                 case('by')
+                    call interpolfld(real(i*istep),real(j), &
+                         real(k),bx0,by0,bz0,ex0,ey0,ez0,bxd, &
+                         byd,bzd,exd,eyd,ezd) 
+                    temporary1(i,ny,nz)=real(by0+byd,4)
+                 case('jx')
+                    !                   call interpolcurrent(real(i*istep),real(j), &
+                    !                        real(k),curx0, cury0, curz0)
+                    curx0=curx(i*istep,j,k)
+                    temporary1(i,ny,nz)=real(curx0,4)
+                 case('jy')
+                    !                   call interpolcurrent(real(i*istep),real(j), &
+                    !                        real(k),curx0, cury0, curz0)
+                    cury0=cury(i*istep,j,k)
+                    temporary1(i,ny,nz)=real(cury0,4)
+                 case('jz')
+                    !                   call interpolcurrent(real(i*istep),real(j), &
+                    !                        real(k),curx0, cury0, curz0)
+                    curz0=curz(i*istep,j,k)
+                    temporary1(i,ny,nz)=real(curz0,4)
+                 case('ken','v3x','v3y','v3z','v4x','v4y','v4z',&
+                      'keni','v3xi','v3yi','v3zi','v4xi','v4yi','v4zi')
+                    temporary1(i,ny,nz)=real(curx(i*istep,j,k),4)
+                 end select
+                 
+              enddo
+           enddo
+        enddo
+        
+
+#ifdef serIO
+        !
+        ! Serial writing
+        !
+        if (rank.eq.0.and.debug) print *,"serial writing for .hug."
+
+        do procn=0,size0-1
+
+           if (rank .eq. 0) then
+              if (procn .eq. 0) then
+                 call h5dcreate_f(file_id,varname,H5T_NATIVE_REAL, &
+                      filespace(iv),dset_id(iv), error)
+                 call h5dclose_f(dset_id(iv), error)
+              endif
+           endif
+           
+           ! Determine which processors should write to file
+           saverank=.true.
+           if (my1list(procn+1)*mz1list(procn+1) .eq. 0) then
+              saverank=.false.
+           endif
+
+           ! write only if saverank eq. .true.
+           if (saverank) then
+              
+           if (rank .eq. 0) then
+              
+              if (procn .ne. 0) then !receive from procn                                
+#ifdef MPI
+                 call MPI_Recv(temporary0(1:mx0/istep,1:my1list(procn+1), &
+                      1:mz1list(procn+1)),mx0/istep*my1list(procn+1) &
+                      *mz1list(procn+1),mpi_real,procn,1, &
+                      MPI_COMM_WORLD,status,error)
+#endif
+              else           !procn eq 0
+                 temporary0(1:mx0/istep,1:my1,1:mz1)=temporary1               
+              endif
+              
+              !     computing the offset
+              count(1) = dimsf(1)
+              count(2) = my1list(procn+1)
+              count(3) = mz1list(procn+1)
+              
+              offset(1) = 0
+              offset(2) = 0
+              offset(3) = 0
+              !     z offset
+              if(procn/sizey .gt. 0) then 
+                 offset(3)=sum(mz1list(1:(procn/sizey)*sizey:sizey))
+              endif
+#ifdef twoD 
+              offset(3)=0
+#endif
+              !     y offset
+              if(modulo(procn,sizey) .gt. 0) then 
+                 offset(2)=sum(my1list((procn/sizey)*sizey+1:procn))
+              endif
+              
+              !hyperslab selection
+#ifdef MPI
+              ! this is necessay only if I close the filespace above      
+              !               call h5dget_space_f(dset_id(iv), filespace(iv), error)               
+              call h5sselect_hyperslab_f(filespace(iv),H5S_SELECT_SET_F &
+                   ,offset,count,error)
+#endif               
+              
+              !memory space
+#ifdef MPI
+              call h5screate_simple_f(datarank, count, memspace, error) 
+#endif              
+              
+              !create or open the dataset
+              call h5dopen_f(file_id,varname,dset_id(iv),error)
+              
+
+              !writing
+              if(debug)print *,rank,": before h5dwrite","filespace", &
+                   filespace(iv),"memspace",memspace
+              
+#ifdef MPI
+              call h5dwrite_f(dset_id(iv), H5T_NATIVE_REAL,  &
+                   temporary0(1:mx0/istep,1:my1list(procn+1), &
+                   1:mz1list(procn+1)),dimsfi,error,mem_space_id= &
+                   memspace,file_space_id = filespace(iv))
+              !               call h5dwrite_real_1(dset_id(iv), H5T_NATIVE_REAL, 
+              !     &                   temporary0(:,:,:),dimsfi,error,file_space_id = 
+              !     &                   filespace(iv), mem_space_id=memspace)
+#else
+              call h5dwrite_f(dset_id(iv),H5T_NATIVE_REAL, &
+                   temporary(:,:,:) ,dimsfi,error)
+#endif 
+              
+              !closing dataset and memory space
+              if(debug)print *, rank, ": ", iv, "closing d"
+              call h5dclose_f(dset_id(iv), error)
+              if(debug)print *, rank, ": ", "closing m"
+              call h5sclose_f(memspace, error)
+
+           else !rank ne 0
+              
+              if (procn .eq. rank) then
+#ifdef MPI
+                 call MPI_Send(temporary1,mx0/istep*my1 &
+                      *mz1,mpi_real,0,1, &
+                      MPI_COMM_WORLD,error) 
+#endif             
+              endif
+              
+           endif !rank ne 0
+              
+           endif !saverank .eq. .true.
+           
+        enddo!procn
+        
+#else 
+! finished serial writing
+
+        !
+        ! Parallel writing
+        !     
+        if (rank.eq.0.and.debug) print *,"parallel writing of .hug. files"
+           
+        ! Determine which processors should write to file
+        saverank=.true.
+        if (my1*mz1 .eq. 0) then
+           saverank=.false.
+        endif
+
+        !
+        ! Create the dataset with default properties
+        !
+        call h5dcreate_f(file_id, varname, H5T_NATIVE_REAL, &
+             filespace(iv),dset_id(iv), error)
+        call h5sclose_f(filespace(iv), error)
+        call h5dget_space_f(dset_id(iv), filespace(iv), error)
+
+        !
+        ! Create property list for collective dataset write
+        !
+#ifdef MPI
+        call h5pcreate_f(H5P_DATASET_XFER_F, plist_id, error) 
+        call h5pset_dxpl_mpio_f(plist_id, H5FD_MPIO_COLLECTIVE_F, error)
+#endif
+           
+        !
+        ! Each process defines dataset in memory and writes it to the hyperslab
+        ! in the file. 
+        !
+        count(1) = dimsf(1)
+        count(2) = my1
+        count(3) = mz1
+        
+        offset(1) = 0
+        offset(2) = 0
+        offset(3) = 0
+        !z offset
+        if(rank/sizey .gt. 0) then 
+           offset(3) = sum(mz1list(1:(rank/sizey)*sizey:sizey))
+        endif
+#ifdef twoD 
+        offset(3)=0
+#endif
+        !now get the y offset
+        if(modulo(rank,sizey) .gt. 0) then 
+           offset(2)=sum(my1list((rank/sizey)*sizey+1:rank))
+        endif
+        
+        ! write only if saverank .eq. .true.
+        if (saverank) then
+
+#ifdef MPI
+        call h5screate_simple_f(datarank, count, memspace, error) 
+#endif
+        
+        ! 
+        ! Select hyperslab in the file.
+        !
+#ifdef MPI              
+        call h5sselect_hyperslab_f(filespace(iv),H5S_SELECT_SET_F,offset &
+             ,count, error)
+#endif
+        
+        if(debug)print *,rank,": before h5dwrite","filespace",filespace(iv &
+             ),memspace
+        
+#ifdef MPI
+        !call h5dwrite_real_1(dset_id(iv), H5T_NATIVE_REAL, temporary1(:,: &
+        !     ,:),dimsfi,error,file_space_id = filespace(iv), mem_space_id &
+        !     =memspace,xfer_prp = h5p_default_f)
+
+        call h5dwrite_f(dset_id(iv), H5T_NATIVE_REAL, temporary1(:,: &
+             ,:),dimsfi,error,file_space_id = filespace(iv), mem_space_id &
+             =memspace,xfer_prp = h5p_default_f)
+
+#else
+        call h5dwrite_f(dset_id(iv),H5T_NATIVE_REAL,TEMPORARY1(:,: &
+             ,:) ,dimsfi,error)
+#endif      
+        endif ! saverank .eq. .true.
+     
+#endif 
+ !finished parallel writing    
+        
+
+        !
+        !Closing dataset and dataspace    
+        !
+#ifdef serIO    
+        if (rank .eq. 0) then
+#ifdef MPI
+           if(debug)print *, rank, ": ", iv, "closing s" 
+           call h5sclose_f(filespace(iv), error)
+#endif
+        endif
+#else
+        if(debug)print *, rank, ": ", iv, "closing d"
+        call h5dclose_f(dset_id(iv), error)
+#ifdef MPI
+        if(debug)print *, rank, ": ", iv, "closing s" 
+        call h5sclose_f(filespace(iv), error)     
+#endif
+#endif
+
+     enddo!nvars
+     
+     
+     !
+     ! Closing memory space, file and hdf5
+     !
+#ifdef serIO
+     if (rank .eq. 0) then
+        if(debug)print *, rank, ": ", "closing f"
+        call h5fclose_f(file_id, error)
+        if(debug)print *, rank, ": ", "closing h5"
+        call h5close_f(error)
+        deallocate(temporary0)
+     endif
+#else
+#ifdef MPI
+     if (saverank) then
+        if(debug)print *, rank, ": ", "closing m"
+        call h5sclose_f(memspace, error)
+     endif !saverank .eq. .true.
+     if(debug)print *, rank, ": ", "closing p"
+     call h5pclose_f(plist_id, error)
+#endif
+     if(debug)print *, rank, ": ", "closing f"
+     call h5fclose_f(file_id, error)
+     if(debug)print *, rank, ": ", "closing h5"
+     call h5close_f(error)    
+#endif
+     
+     if(debug) print *, rank,": finished writing .hug. fields"
+     
+     deallocate(temporary1)
+
+     !-----------------------------------------
+     !for huge files no need to write particles
+     !-----------------------------------------
+
+  endif !torqint
+
+  istep=istep0
+
+end subroutine output_hug
+
+
+!-------------------------------------------------------------------------------
+! 						subroutine write_test_e				 
+! Jaehong, updated 9/2013																		
+! Track preselected electrons (from restart in former simulation) 
+! Serially collected HDF files are created in output/tracking/ directory.
+!  							
+!-------------------------------------------------------------------------------
+
+subroutine write_test_e()
+
+ 	 implicit none
+ 	 
+ 	 integer i,n,n1,statusfile,procn
+ 	 real bx0,by0,bz0,ex0,ey0,ez0,dummy,gam
+ 	 character fnametst*20
+ 	 integer num1,proc1 	 
+ 	 ! number of detected particles in each rank
+ 	 integer nsave
+ 	 integer, allocatable :: nsavelist(:)
+ 	 ! number of detected particles (in all ranks)
+ 	 integer nsave0
+ 	 ! particle data (local)
+ 	 real, allocatable :: lecdata(:,:)
+ 	 ! particle data (global)
+	 real, allocatable :: lecdata0(:,:)
+	 integer, allocatable :: selectpart(:)
+	 
+	 integer istart, ifinal
+	 character (len=50) :: fname
+	 character(len=10) dsetname(20)
+	 integer ::datarank, error, ierr
+	 integer :: status(MPI_STATUS_SIZE)
+	 
+	 
+#ifdef HDF5
+	 integer(HID_T) :: file_id       ! File identifier 
+	 integer(HID_T) :: dset_id       ! Dataset identifier 
+	 integer(HID_T) :: dspace_id
+	 integer(HSIZE_T) data_dims(2)
+#endif
+	 
+	 allocate(nsavelist(size0))  
+	
+ 	 if(prt_first_lec) then  !do it only at the first time 
+    
+ 	 	!  count the number of selected particles in "select.testprt.dat"
+ 	 	write(fnametst,"(a17)") "select.test.e.dat"
+ 	 	open(unit=43, file=fnametst,form='formatted')
+ 	 	if(rank .eq. 0) print *,"loading particles from ",fnametst
+ 	 	sele=0
+ 	 	! read selected partcles; index, processor, gamma
+301  	read(43,*,err=398,end=399) num1, proc1, gam
+      	! number of electrons
+        sele=sele+1
+        goto 301
+398  	print *,"error reading the test.sel. file"
+399  	continue
+     	close(43)
+     	     	
+     	allocate(selprte(sele))
+     
+     	open(unit=43, file=fnametst,form='formatted')     
+     	sele=0
+401  	read(43,*,err=498,end=499) num1,proc1,gam
+			sele=sele+1
+        	selprte(sele)%ind=num1
+        	selprte(sele)%proc=proc1
+        goto 401
+498  	print *,"error reading the test.sel. file"
+499  	continue
+
+    	if(rank .eq. 0) print*, "selected electrons : ", sele
+         	
+  endif ! only for the first time
+  
+  
+  		 allocate(selectpart(sele))
+     	       	     
+     	 nsave=0 ! number of detected electrons
+     	 do n=maxhlf+1,maxhlf+lecs
+     	 	if(p(n)%ind .ne. 0) then
+     	 		do n1=1,sele
+     	 			! detect condition
+       				if(p(n)%ind .eq. selprte(n1)%ind & 
+       					.and. p(n)%proc .eq. selprte(n1)%proc) then
+        				nsave=nsave+1    
+         				selectpart(nsave)=n
+         			endif
+         		enddo
+         	endif
+         enddo
+     
+      	allocate(lecdata(nsave,16))
+
+      	call mpi_allgather(nsave,1,mpi_integer, &
+                   nsavelist,1,mpi_integer,mpi_comm_world,ierr)
+        call mpi_allreduce(nsave,nsave0,1,mpi_integer,mpi_sum &
+			,mpi_comm_world,ierr)         
+              
+        if(nsave0 .ne. 0) then
+        ! particle data (global)
+        	allocate(lecdata0(nsave0,16))
+        else
+        	allocate(lecdata0(1,16))
+        endif
+	
+        do i=1, nsave      
+           	n=selectpart(i)
+	       	call interpolfld(real(p(n)%x),real(p(n)%y),p(n)%z,bx0,by0, &
+                  	 bz0,ex0,ey0,ez0,dummy,dummy,dummy,dummy,dummy,dummy)
+     	
+            lecdata(i,1)=lap
+            lecdata(i,2)=p(n)%ind
+            lecdata(i,3)=p(n)%proc
+            lecdata(i,4)=p(n)%x+mxcum
+            lecdata(i,5)=p(n)%y+mycum
+            lecdata(i,6)=p(n)%z+mzcum
+            lecdata(i,7)=p(n)%u
+            lecdata(i,8)=p(n)%v
+            lecdata(i,9)=p(n)%w
+            lecdata(i,10)=sqrt(1.+(p(n)%u**2+p(n)%v**2+p(n)%w**2))	
+            lecdata(i,11)=ex0
+            lecdata(i,12)=ey0
+            lecdata(i,13)=ez0
+            lecdata(i,14)=bx0
+            lecdata(i,15)=by0
+            lecdata(i,16)=bz0
+            
+        enddo      
+
+      ! serial writing	
+      	  
+      	if(nsave0 .ne. 0) then  
+     
+      	do procn=0, size0-1
+           
+           	if (rank .eq. 0) then
+           	   
+           		if (procn .ne. 0) then !receive from procn         
+           		
+                  	istart=sum(nsavelist(1:procn))+1
+                  	ifinal=istart+nsavelist(procn+1)-1                   
+                         
+                    call MPI_Recv(lecdata0(istart:ifinal,1:16) &
+                         ,nsavelist(procn+1)*16,mpi_real,procn,1, &
+                         MPI_COMM_WORLD,status,ierr)    
+                
+                else  !procn eq 0          	                   	    	    
+                          	 
+                    lecdata0(1:nsave,1:16)=lecdata(1:nsave,1:16)              
+              	endif
+              
+            else !rank ne 0
+            	if (procn .eq. rank) then        
+              	  	call MPI_Send(lecdata(1:nsave,1:16), &
+                 	 	nsave*16,mpi_real,0,1,MPI_COMM_WORLD,ierr)                 	 	
+                endif
+              
+            endif   !rank ne 0
+	
+       enddo !procn 
+       
+          
+     else	!if nsvai0 .ne. 0
+     	   nsave0=1
+       	   if (rank .eq. 0) then
+       	   	   lecdata0(:,:)=0
+       	   endif
+     endif
+	   
+       call mpi_barrier(MPI_COMM_WORLD,ierr)       
+    	   
+       
+       if(rank .eq. 0) then 	      	   
+       	   
+       	   !******************************************************
+       	   !****** 	save partcle tracking
+       	   !******************************************************
+
+       	   write(fname,"(a31,i7.7)") "./output/tracking_elec/testprt.",lap
+       	   print *,"",fname        
+        
+       	   !   Initialize FORTRAN predefined datatypes
+			
+       	   call h5open_f(error) 
+       	   call h5fcreate_f(fname,H5F_ACC_TRUNC_F,file_id,error)
+	
+   		   dsetname(1)="elec"
+		   datarank=2
+		
+		   data_dims(1)=nsave0
+		   data_dims(2)=16
+		
+		   call h5screate_simple_f(datarank, data_dims, dspace_id, error)
+		   call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
+				,dspace_id,dset_id,error)			
+		   call h5dwrite_f(dset_id, H5T_NATIVE_REAL,lecdata0, data_dims, error)
+		   call h5dclose_f(dset_id,error)
+		   call h5sclose_f(dspace_id,error)
+	   
+		   call h5fclose_f(file_id, error)
+		   call h5close_f(error)
+	   
+	   endif ! rank 0
+	
+	   if(allocated(selectpart)) deallocate(selectpart)
+	   if(allocated(lecdata)) deallocate(lecdata)
+	   if(allocated(lecdata0)) deallocate(lecdata0)
+
+	   
+	   call mpi_barrier(MPI_COMM_WORLD,ierr)	 	  
+	      
+  
+end subroutine write_test_e
+
+!---------------------------------------------------------------------
+
+
+subroutine write_test_p()
+
+ 	 implicit none
+ 	 
+ 	 integer i,n,n1,statusfile,procn
+ 	 real bx0,by0,bz0,ex0,ey0,ez0,dummy,gam
+ 	 character fnametst*20
+ 	 integer num1,proc1 	 
+ 	 ! number of detected particles in each rank
+ 	 integer nsavi
+ 	 integer, allocatable :: nsavilist(:)
+ 	 ! number of detected particles (in all ranks)
+ 	 integer nsavi0
+ 	 ! particle data (local)
+ 	 real, allocatable :: iondata(:,:)
+ 	 ! particle data (global)
+	 real, allocatable :: iondata0(:,:)
+	 integer, allocatable :: selectpart(:)
+	 
+	 integer istart, ifinal
+	 character (len=50) :: fname
+	 character(len=10) dsetname(20)
+	 integer ::datarank, error, ierr
+	 integer :: status(MPI_STATUS_SIZE)
+	 
+	 
+#ifdef HDF5
+	 integer(HID_T) :: file_id       ! File identifier 
+	 integer(HID_T) :: dset_id       ! Dataset identifier 
+	 integer(HID_T) :: dspace_id
+	 integer(HSIZE_T) data_dims(2)
+#endif
+	 
+	 allocate(nsavilist(size0))  
+
+ 
+ 	 if(prt_first_ion) then  !first time 
+    
+ 	 	!    count the number of selected particles in "select.testprt.dat"
+ 	 	write(fnametst,"(a17)") "select.test.p.dat"
+ 	 	open(unit=43, file=fnametst,form='formatted')
+ 	 	if(rank .eq. 0) print *,"loading particles from ",fnametst
+ 	 	seli=0
+ 	 	! read selected partcles; index, processor, gamma
+301  	read(43,*,err=398,end=399) num1, proc1, gam
+   		! number of ions
+        seli=seli+1
+        goto 301
+398  	print *,"error reading the test.sel. file"
+399  	continue
+     	close(43)
+     	     	
+     	allocate(selprti(seli))
+       
+     	open(unit=43, file=fnametst,form='formatted')     
+     	seli=0
+401  	read(43,*,err=498,end=499) num1,proc1,gam
+    	   	seli=seli+1
+        	selprti(seli)%ind=num1
+        	selprti(seli)%proc=proc1 
+        goto 401
+498  	print *,"error reading the test.sel. file"
+499  	continue
+
+		if(rank .eq. 0) print*, "selected ions : ", seli
+     
+  endif ! only for the first time
+  
+  		allocate(selectpart(seli))
+        
+     	nsavi=0	     ! number of detected ions
+     	do n=1,ions
+     		if(p(n)%ind .ne. 0) then 
+     			do n1=1,seli
+     				! detect condition
+     				if(p(n)%ind .eq. selprti(n1)%ind & 
+     					.and. p(n)%proc .eq. selprti(n1)%proc) then
+     					nsavi=nsavi+1    
+     					selectpart(nsavi)=n           
+     				endif
+     			enddo
+     		endif
+     	enddo
+  
+		allocate(iondata(nsavi,16))	
+
+	 	call mpi_allgather(nsavi,1,mpi_integer, &
+               nsavilist,1,mpi_integer,mpi_comm_world,ierr)     
+        call mpi_allreduce(nsavi,nsavi0,1,mpi_integer,mpi_sum &
+			,mpi_comm_world,ierr)  
+			
+        if(nsavi0 .ne. 0) then
+        	allocate(iondata0(nsavi0,16))         
+        else
+        	allocate(iondata0(1,16))
+        endif
+        
+        
+        do i=1, nsavi
+	    	n=selectpart(i)
+	    
+	    	call interpolfld(real(p(n)%x),real(p(n)%y),p(n)%z,bx0,by0, &
+                   bz0,ex0,ey0,ez0,dummy,dummy,dummy,dummy,dummy,dummy)
+     	    
+            iondata(i,1)=lap
+            iondata(i,2)=p(n)%ind
+            iondata(i,3)=p(n)%proc
+            iondata(i,4)=p(n)%x+mxcum
+            iondata(i,5)=p(n)%y+mycum
+            iondata(i,6)=p(n)%z+mzcum
+            iondata(i,7)=p(n)%u
+            iondata(i,8)=p(n)%v
+            iondata(i,9)=p(n)%w
+            iondata(i,10)=sqrt(1.+(p(n)%u**2+p(n)%v**2+p(n)%w**2))
+            iondata(i,11)=ex0
+            iondata(i,12)=ey0
+            iondata(i,13)=ez0
+            iondata(i,14)=bx0
+            iondata(i,15)=by0
+            iondata(i,16)=bz0
+            
+        enddo  	           
+      
+        
+        ! serial writing	        
+        
+      if(nsavi0 .ne. 0) then
+      	
+      	do procn=0, size0-1
+           
+           	if (rank .eq. 0) then
+           	   
+           		if (procn .ne. 0) then !receive from procn    
+              
+              	  	! ions
+              	  	istart=sum(nsavilist(1:procn))+1
+              	  	ifinal=istart+nsavilist(procn+1)-1              	  	
+              	  	
+              	  	call MPI_Recv(iondata0(istart:ifinal,1:16) &
+                         ,nsavilist(procn+1)*16,mpi_real,procn,1, &
+                         MPI_COMM_WORLD,status,ierr)                            
+                 
+                else  !procn eq 0              	      
+               	    iondata0(1:nsavi,1:16)=iondata(1:nsavi,1:16)              	    
+              	  
+              	endif
+              
+            else !rank ne 0
+            	if (procn .eq. rank) then
+            		call MPI_Send(iondata(1:nsavi,1:16), &
+                 	 	nsavi*16,mpi_real,0,1,MPI_COMM_WORLD,ierr)                  	            	 	
+                endif
+              
+            endif   !rank ne 0
+	
+       enddo !procn          	   
+       
+     else	!if nsvai0 .ne. 0
+     	   nsavi0=1
+       	   if (rank .eq. 0) then
+       	   	   iondata0(:,:)=0
+       	   endif
+     endif
+      	   	   
+          
+     call mpi_barrier(MPI_COMM_WORLD,ierr)
+
+       
+       if(rank .eq. 0) then 	      	   
+       	   
+       	   !******************************************************
+       	   !****** 	save partcle tracking
+       	   !******************************************************
+
+       	   write(fname,"(a30,i7.7)") "./output/tracking_ion/testprt.",lap
+       	   print *,"",fname        
+        
+       	   !   Initialize FORTRAN predefined datatypes
+			
+       	   call h5open_f(error) 
+       	   call h5fcreate_f(fname,H5F_ACC_TRUNC_F,file_id,error)
+	
+       	   dsetname(1)="ion"
+       	   datarank=2
+		
+       	   data_dims(1)=nsavi0
+       	   data_dims(2)=16
+		
+       	   call h5screate_simple_f(datarank, data_dims, dspace_id, error)
+       	   call h5dcreate_f(file_id, dsetname(1), H5T_NATIVE_REAL &
+				,dspace_id,dset_id,error)			
+		   call h5dwrite_f(dset_id, H5T_NATIVE_REAL,iondata0, data_dims, error)
+		   call h5dclose_f(dset_id,error)
+		   call h5sclose_f(dspace_id,error)
+   
+	
+		   call h5fclose_f(file_id, error)
+		   call h5close_f(error)
+	   
+	   endif ! rank 0
+	
+	   if(allocated(selectpart)) deallocate(selectpart)
+	   if(allocated(iondata)) deallocate(iondata)
+	   if(allocated(iondata0)) deallocate(iondata0)
+	   
+	   call mpi_barrier(MPI_COMM_WORLD,ierr)	 	  
+	      
+  
+end subroutine write_test_p
 
 
 !-------------------------------------------------------------------------------
 ! 						subroutine interpolfld					 
-!																		
-!
+!														
+! To interpolate fields to output grid
 !  							
 !-------------------------------------------------------------------------------
 
@@ -5105,9 +5037,10 @@ end subroutine interpolfld
 
 !-------------------------------------------------------------------------------
 ! 						subroutine interpolcurrent					 
-!																		
+!														
+! To interpolate currents to output grid 
+! Not used 							
 !
-!  							
 !-------------------------------------------------------------------------------
 
 subroutine interpolcurrent(x,y,z,curx0, cury0, curz0)
@@ -5193,204 +5126,268 @@ end subroutine interpolcurrent
 
 
 !-------------------------------------------------------------------------------
-! 						subroutine meanq_dens_cur					 
-!																		
-!
+! 						subroutine meanq_fld_cur			 
+!											
+! To compute derived fluid quantities, like density and density of ions	
+! or 3 velocity of the fluid, or 3 velocity of ions
 !  							
 !-------------------------------------------------------------------------------
 
-subroutine meanq_dens_cur()
+subroutine meanq_fld_cur(totname)
 
-	implicit none
-	
-	! local variables
-	
-	!save only density array
-	real uloc, vloc, wloc, gamma
-	integer ::count, uprank, dwnrank,nn0, i, j, k, lx1, lx2, ly1, ly2, &
-	lz1, lz2, uptag, dwntag, comm,ierr,status(statsize)
-	integer ::request(2), status1(statsize,2)
-	real, allocatable :: buffer(:,:,:), bufferout(:,:,:)
-	integer ::lfttag, rgttag, lftrank, rgtrank
-	
+  implicit none
+  
+  ! local variables
+  
+  !save only density array
+  character (len=5) totname
+  real uloc, vloc, wloc, gamprt, addprtx, addprty
+  integer ::count, uprank, dwnrank,nn0, i, j, k, lx1, lx2, ly1, ly2, &
+       lz1, lz2, uptag, dwntag, comm,ierr,status(statsize)
+  integer ::request(2), status1(statsize,2)
+  real, allocatable :: buffer(:,:,:), bufferout(:,:,:)
+  integer ::lfttag, rgttag, lftrank, rgtrank
 
-	allocate(buffer(mx,my,2), bufferout(mx,my,2))
-	
-	if(debug .and. rank.eq.0) print *, rank,": ","in meanq", mx,my,mz
 
-	uptag=100
-	dwntag=200
-	rgttag=uptag
-	lfttag=dwntag
-	
-	comm=MPI_Comm_world
-	
-	maxhlf=maxptl/2
-	curx=0.
-	cury=0.
-	
-	do nn0=1,maxptl
-		if(nn0.le.ions .or. (nn0.gt.maxhlf .and. nn0.le.maxhlf+lecs)) then
-		if(debug .and. ions .eq. 0) print *,rank,": ions=0",ions, lecs, nn0              
-			
-			i=p(nn0)%x
-			j=p(nn0)%y
-			k=p(nn0)%z
-			
-			lz1=max(k-idz,1)
-			lz2=min(k+idz,mz)
-			
+  allocate(buffer(mx,my,2), bufferout(mx,my,2))
+  
+  if(debug .and. rank.eq.0) print *, rank,": ","in meanq", mx,my,mz
+  
+  uptag=100
+  dwntag=200
+  rgttag=uptag
+  lfttag=dwntag
+  
+  comm=MPI_Comm_world
+  
+  maxhlf=maxptl/2
+  curx=0.
+  cury=0.
+  curz=0.
+  
+  do nn0=1,maxptl
+     if(nn0.gt.ions .and. nn0 .lt. maxhlf) cycle
+     if(nn0 .gt. maxhlf+lecs) cycle
+    gamprt=1./sqrt(1.+p(nn0)%u**2+p(nn0)%v**2+p(nn0)%w**2)
+
+     addprtx=0.
+     addprty=0.
+     select case(totname)
+        !density
+     case('tdens')
+        addprtx=p(nn0)%ch
+     case('idens')
+        if(nn0 .le. ions) then
+           addprtx=p(nn0)%ch
+        endif
+     case('hdens')
+     if(nn0 .ge. maxhlf+1 .and. p(nn0)%ind .gt. 0) then
+        addprtx=p(nn0)%ch   
+     endif
+     case('ldens')
+     if(nn0 .ge. maxhlf+1 .and. p(nn0)%ind .lt. 0) then
+        addprtx=1.   
+     endif
+        !beam density
+     case('btden')
+        if(p(nn0)%ind .lt. 0) then
+           addprtx=p(nn0)%ch
+        endif
+     case('biden')
+        if(nn0 .le. ions .and. p(nn0)%ind .lt. 0) then
+           addprtx=p(nn0)%ch
+        endif
+        !3-velocity
+     case('tbetx')
+        addprtx=p(nn0)%u*gamprt*p(nn0)%ch
+        addprty=p(nn0)%ch
+     case('ebetx')
+     	if(nn0 .ge. maxhlf+1) then
+     		addprtx=p(nn0)%u*gamprt*p(nn0)%ch
+     		addprty=p(nn0)%ch
+		endif        
+     case('ibetx')
+        if(nn0 .le. ions) then
+           addprtx=p(nn0)%u*gamprt*p(nn0)%ch
+           addprty=p(nn0)%ch        
+        endif
+     case('tbety')
+        addprtx=p(nn0)%v*gamprt*p(nn0)%ch
+        addprty=p(nn0)%ch
+     case('ebety')
+        if(nn0 .ge. maxhlf+1) then
+           addprtx=p(nn0)%v*gamprt*p(nn0)%ch
+           addprty=p(nn0)%ch        
+        endif        
+     case('ibety')
+        if(nn0 .le. ions) then
+           addprtx=p(nn0)%v*gamprt*p(nn0)%ch
+           addprty=p(nn0)%ch        
+        endif
+     case('tbetz')
+        addprtx=p(nn0)%w*gamprt*p(nn0)%ch
+        addprty=p(nn0)%ch
+     case('ebetz')
+        if(nn0 .ge. maxhlf+1) then
+           addprtx=p(nn0)%w*gamprt*p(nn0)%ch
+           addprty=p(nn0)%ch        
+        endif
+     case('ibetz')
+        if(nn0 .le. ions) then
+           addprtx=p(nn0)%w*gamprt*p(nn0)%ch
+           addprty=p(nn0)%ch        
+        endif
+        !4-velocity
+     case('tmomx')
+        addprtx=p(nn0)%u*p(nn0)%ch
+        addprty=p(nn0)%ch
+     case('imomx')
+        if(nn0 .le. ions) then
+           addprtx=p(nn0)%u*p(nn0)%ch
+           addprty=p(nn0)%ch        
+        endif
+     case('tmomy')
+        addprtx=p(nn0)%v*p(nn0)%ch
+        addprty=p(nn0)%ch
+     case('imomy')
+        if(nn0 .le. ions) then
+           addprtx=p(nn0)%v*p(nn0)%ch
+           addprty=p(nn0)%ch        
+        endif
+     case('tmomz')
+        addprtx=p(nn0)%w*p(nn0)%ch
+        addprty=p(nn0)%ch
+     case('imomz')
+        if(nn0 .le. ions) then
+           addprtx=p(nn0)%w*p(nn0)%ch
+           addprty=p(nn0)%ch        
+        endif
+        !energy
+     case('eener')
+    	if(nn0 .ge. maxhlf+1) then
+        addprtx=(1./gamprt-1.)*p(nn0)%ch
+        addprty=p(nn0)%ch
+        endif
+     case('iener')
+        if(nn0 .le. ions) then
+           addprtx=(1./gamprt-1.)*p(nn0)%ch
+           addprty=p(nn0)%ch        
+        endif   
+        !3 velocity square
+     case('eetx2')
+     	if(nn0 .ge. maxhlf+1) then
+     		addprtx=(p(nn0)%u*gamprt)**2*p(nn0)%ch
+     		addprty=p(nn0)%ch
+		endif        
+     case('ietx2')
+        if(nn0 .le. ions) then
+           addprtx=(p(nn0)%u*gamprt)**2*p(nn0)%ch
+           addprty=p(nn0)%ch        
+        endif
+     case('eety2')
+        if(nn0 .ge. maxhlf+1) then
+           addprtx=(p(nn0)%v*gamprt)**2*p(nn0)%ch
+           addprty=p(nn0)%ch        
+        endif        
+     case('iety2')
+        if(nn0 .le. ions) then
+           addprtx=(p(nn0)%v*gamprt)**2*p(nn0)%ch
+           addprty=p(nn0)%ch        
+        endif
+     case('eetz2')
+        if(nn0 .ge. maxhlf+1) then
+           addprtx=(p(nn0)%w*gamprt)**2*p(nn0)%ch
+           addprty=p(nn0)%ch        
+        endif
+     case('ietz2')
+        if(nn0 .le. ions) then
+           addprtx=(p(nn0)%w*gamprt)**2*p(nn0)%ch
+           addprty=p(nn0)%ch        
+        endif        
+        
+     end select
+
+     if(nn0.le.ions .or. (nn0.gt.maxhlf .and. nn0.le.maxhlf+lecs)) then
+        if(debug .and. ions .eq. 0) print *,rank,": ions=0",ions, lecs, nn0              
+        
+        i=p(nn0)%x
+        j=p(nn0)%y
+        k=p(nn0)%z
+        
+        lz1=max(k-idz,1)
+        lz2=min(k+idz,mz)
+        
 #ifdef twoD
-				lz1=1
-				lz2=1
+        lz1=1
+        lz2=1
 #endif
-			
-			ly1=max(j-idy,1)
-			ly2=min(j+idy,my)
-			
-			lx1=max(i-idx,1)
-			lx2=min(i+idx,mx)
-			
-			do k=lz1,lz2
-				do j=ly1,ly2
-					do i=lx1,lx2
-						!density
-						curx(i,j,k)=curx(i,j,k)+real(splitratio)**(1-p(nn0) &
-						%splitlev)*p(nn0)%ch
-						if(nn0 .le. ions) cury(i,j,k)=cury(i,j,k) &
-						+real(splitratio)**(1-p(nn0)%splitlev)*p(nn0)%ch
-						
-					enddo
-				enddo
-			enddo
-			
-		endif
-	enddo                     !particle loop
+        
+        ly1=max(j-idy,1)
+        ly2=min(j+idy,my)
+        
+        lx1=max(i-idx,1)
+        lx2=min(i+idx,mx)
+        
+        do k=lz1,lz2
+           do j=ly1,ly2
+              do i=lx1,lx2
+              
+                 curx(i,j,k)=curx(i,j,k)+addprtx
+                 cury(i,j,k)=cury(i,j,k)+addprty
 
-	
-#ifndef twoD
-		if(debug .and. rank.eq.0)print *,rank,":","1"
-		!      uprank=modulo(rank+1,size0)
-		!      dwnrank=modulo(rank-1,size0)
-		
-		uprank=modulo((rank/sizey + 1),sizez)*sizey + modulo(rank,sizey)
-		dwnrank=modulo((rank/sizey - 1),sizez)*sizey + modulo(rank,sizey) 
-		
-		count=2*mx*my
-		
-		if(debug .and. rank.eq.0)print *, rank,":", uprank,dwnrank,count,mz,uptag, &
-		dwntag 
-		!send up
-		bufferout=curx(:,:,mz-2:mz-1)
-		
-		call MPI_SendRecv(bufferout,count,mpi_read,uprank,uptag, &
-		buffer,count,mpi_read,dwnrank,uptag,comm &
-		,status,ierr) 
-		curx(:,:,3:4)=curx(:,:,3:4)+buffer
-		buffer=0.
-		
-		!send down
-		bufferout=curx(:,:,1:2)
-		call MPI_SendRecv(bufferout,count,mpi_read,dwnrank,dwntag, &
-		buffer,count,mpi_read,uprank,dwntag,comm &
-		,status,ierr) 
-		curx(:,:,mz-4:mz-3)=curx(:,:,mz-4:mz-3)+buffer
-		
-		if(debug .and. rank.eq.0)print *,rank,":", "sent & received nav" 
-		!::::::::::::::::::::::::::::::::::::::::::::::::::::::
-		!send up
-		bufferout=cury(:,:,mz-2:mz-1)
-		
-		call MPI_SendRecv(bufferout,count,mpi_read,uprank,uptag, &
-		buffer,count,mpi_read,dwnrank,uptag,comm &
-		,status,ierr) 
-		cury(:,:,3:4)=cury(:,:,3:4)+buffer
-		buffer=0.
-		
-		!send down
-		bufferout=cury(:,:,1:2)
-		call MPI_SendRecv(bufferout,count,mpi_read,dwnrank,dwntag, &
-		buffer,count,mpi_read,uprank,dwntag,comm &
-		,status,ierr) 
-		cury(:,:,mz-4:mz-3)=cury(:,:,mz-4:mz-3)+buffer
-		
-		if(debug .and. rank.eq.0)print *,rank,":", "sent & received navi" 
-		
-#endif
-	
-	!--------------------------------------------------------------
-	! now send and receive left and right
-	!--------------------------------------------------------------
-
-	deallocate(buffer,bufferout)
-	allocate(buffer(mx,2,mz), bufferout(mx,2,mz))
-	
-	rgtrank=(rank/sizey)*sizey + modulo(rank+1,sizey) 
-	lftrank=(rank/sizey)*sizey + modulo(rank-1,sizey) 
-	
-	count=2*mx*mz
-	
-	!send rgt
-	bufferout=curx(:,my-2:my-1,:)
-	
-	call MPI_SendRecv(bufferout,count,mpi_read,rgtrank,rgttag, &
-	buffer,count,mpi_read,lftrank,rgttag,comm &
-	,status,ierr) 
-	curx(:,3:4,:)=curx(:,3:4,:)+buffer
-	buffer=0.
-	
-	!send lft
-	bufferout=curx(:,1:2,:)
-	call MPI_SendRecv(bufferout,count,mpi_read,lftrank,lfttag, &
-	buffer,count,mpi_read,rgtrank,lfttag,comm &
-	,status,ierr) 
-	curx(:,my-4:my-3,:)=curx(:,my-4:my-3,:)+buffer
-	
-	!::::::::::::::::::::::::::::::::::::::::::::::::::::::
-	!send rgt
-	bufferout=cury(:,my-2:my-1,:)
-	
-	call MPI_SendRecv(bufferout,count,mpi_read,rgtrank,rgttag, &
-	buffer,count,mpi_read,lftrank,rgttag,comm &
-	,status,ierr) 
-	cury(:,3:4,:)=cury(:,3:4,:)+buffer
-	buffer=0.
-	
-	!send lft
-	bufferout=cury(:,1:2,:)
-	call MPI_SendRecv(bufferout,count,mpi_read,lftrank,lfttag, &
-	buffer,count,mpi_read,rgtrank,lfttag,comm &
-	,status,ierr) 
-	cury(:,my-4:my-3,:)=cury(:,my-4:my-3,:)+buffer
-	
-	!:::::::::::::::::::::::::::::::::::::::::::::::::::::::::
-	!normalize density
-	do k=1,mz
-		do j=1,my
-			do i=1,mx
-				
-				lz1=max(k-idz,1)
-				lz2=min(k+idz,mz)
-				
-				ly1=max(j-idy,1)
-				ly2=min(j+idy,my)
-				
-				lx1=max(i-idx,1)
-				lx2=min(i+idx,mx)
-				
+              enddo
+           enddo
+        enddo
+        
+     endif
+  enddo                     !particle loop
+  
+  
+	call exchange_current()
+  !:::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+  !normalize density
+  do k=1,mz
+     do j=1,my
+        do i=1,mx
+           
+           lz1=max(k-idz,1)
+           lz2=min(k+idz,mz)
+           
+           ly1=max(j-idy,1)
+           ly2=min(j+idy,my)
+           
+           lx1=max(i-idx,1)
+           lx2=min(i+idx,mx)
+           
 #ifdef twoD
-					lz1=1
-					lz2=1
+           lz1=1
+           lz2=1
 #endif
-				curx(i,j,k)=curx(i,j,k)/((lx2-lx1+1)*(ly2-ly1+1)*(lz2-lz1+1))
-				cury(i,j,k)=cury(i,j,k)/((lx2-lx1+1)*(ly2-ly1+1)*(lz2-lz1+1))
-				
-			enddo
-		enddo
-	enddo
-	deallocate(buffer,bufferout)
-	
-end subroutine meanq_dens_cur
+           curx(i,j,k)=curx(i,j,k)/((lx2-lx1+1)*(ly2-ly1+1)*(lz2-lz1+1))
+           cury(i,j,k)=cury(i,j,k)/((lx2-lx1+1)*(ly2-ly1+1)*(lz2-lz1+1))
+         
+!           curx(i,j,k)=curx(i,j,k)/(idx*idy*idz)
+!           cury(i,j,k)=cury(i,j,k)/(idx*idy*idz)
+           
+ 
+        enddo
+     enddo
+  enddo
+
+  !to compute average 3-velocity, 4-velocity and energy
+  if (totname .ne. 'tdens' .and. totname .ne. 'idens' .and. &
+  	  totname .ne. 'hdens' .and. totname .ne. 'ldens') then 
+     where(cury .ne. 0.) 
+        curx=curx/cury
+     elsewhere 
+        curx=0.
+     endwhere
+  endif
+
+  deallocate(buffer,bufferout)
+  
+end subroutine meanq_fld_cur
+
 
 #ifdef twoD
 end module m_output

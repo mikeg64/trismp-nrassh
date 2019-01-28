@@ -18,6 +18,7 @@ module m_initialize
 	use m_fields
 	use m_fieldboundaries
 	use m_domain
+	use m_dynamic_domain
 	use m_output
 	use m_restart
 	use m_overload
@@ -35,6 +36,7 @@ module m_initialize_3d
 	use m_fields_3d
 	use m_fieldboundaries_3d
 	use m_domain_3d
+	use m_dynamic_domain_3d
 	use m_output_3d
 	use m_restart_3d
 	use m_overload_3d
@@ -42,8 +44,6 @@ module m_initialize_3d
 	use m_inputparser_3d
 	
 #endif
-
-
 	
 	implicit none
 	
@@ -64,7 +64,7 @@ module m_initialize_3d
 
 	real(sprec) :: tcutoff
 	integer :: nhist, nbins, nc
-	
+	character(len=32) :: input_file_name="input"
 !-------------------------------------------------------------------------------
 !	INTERFACE DECLARATIONS
 !-------------------------------------------------------------------------------
@@ -89,6 +89,23 @@ module m_initialize_3d
 ! Takes care of all calls necessary for the initialization of the code
 ! (reading input file, allocating memory, initializing data structures) 							
 !-------------------------------------------------------------------------------
+subroutine read_commandline_args()
+  implicit none
+  
+  integer :: i
+  character(len=32) :: arg, arg1
+
+  do i = 1, command_argument_count()
+     call get_command_argument(i,arg)
+     
+     select case (arg)
+     case ('-i', '--input')
+        call get_command_argument(i+1,arg1)
+        input_file_name=trim(arg1)
+     end select     
+  end do
+  
+end subroutine read_commandline_args
 
 subroutine initialize()
 
@@ -98,19 +115,24 @@ subroutine initialize()
 	
 	integer :: ierr
 	
+        call read_commandline_args()
+
 	call mkdir("output",ierr)
 	call mkdir("restart",ierr)
 
-
 	call set_default_values() ! sets default values for the main global variables
-	
-	call inputpar_open("input")	! parse the input file
+
+	call inputpar_open(input_file_name)	! parse the input file
 	
 	call read_input_communications()
 		
 	call init_communications() ! inits the MPI library and MPI data structures
 
+        if(rank .eq. 0) print *, "Using input file ", input_file_name
 	call read_input_file()		! have all modules read the required variables
+	
+	if(writetestlec)  call mkdir("output/tracking_elec",ierr)
+	if(writetestion)  call mkdir("output/tracking_ion",ierr)
 	
 	if(rank.eq.0) time_beg=mpi_wtime()
 	
@@ -126,7 +148,7 @@ subroutine initialize()
 	
 	call initialize_domain() ! Initalizes m_domain related variables
 	
-	call init_particle_distribution() ! sets the initial particle distribution
+	if (irestart .ne. 1) call init_particle_distribution() ! sets the initial particle distribution
 	
 	call init_EMfields()		 ! Sets the initial EM fields
 	
@@ -162,7 +184,8 @@ subroutine set_default_values()
 	implicit none
 	
 	time_cut=60.*15           ! in seconds, time left
-	prt_first=.true.
+	prt_first_lec=.true.
+	prt_first_ion=.true.
 	
 	lapreorder=0
 	
@@ -217,9 +240,10 @@ subroutine set_default_values()
 	bphi= 0.
 	me=1.
 	mi=1.
-	writetestpart=.false.
-	selectprt=.false.
 	
+	writetestlec=.false.
+	writetestion=.false.
+
 	intrestlocal=-200 !negative means save no local restarts
 	
 !	leftclean=1*0   !need to move this to input file
@@ -262,7 +286,7 @@ subroutine read_input_algorithm()
 	
 	! local variables
 	
-	integer :: lhighorder, lcooling, lsplitparts
+	integer :: lhighorder
 	
 	call inputpar_geti_def("algorithm", "highorder", 1, lhighorder)
 
@@ -275,25 +299,6 @@ subroutine read_input_algorithm()
 	call inputpar_getd_def("algorithm", "Corr", 1.025_sprec, corr)
 
 	call inputpar_geti_def("algorithm", "ntimes", 4, ntimes)
-	call inputpar_geti_def("algorithm", "cleanfld", 0, cleanfld)
-	call inputpar_geti_def("algorithm", "cleanint", 10, cleanint)
-
-	call inputpar_geti_def("algorithm", "cooling", 0, lcooling)
-	call inputpar_geti_def("algorithm", "splitparts", 0, lsplitparts)
-
-	if (lcooling==1) then
-		cooling=.true.
-	else
-		cooling=.false.
-	endif
-
-	if (lsplitparts==1) then
-		splitparts=.true.
-	else
-		splitparts=.false.
-	endif
-
-	call inputpar_getd_def("algorithm", "acool", 10._sprec, acool)
 
 end subroutine read_input_algorithm
 
@@ -313,6 +318,8 @@ subroutine read_input_file()
 	call read_input_time()
 
 	call read_input_grid()
+	
+	call read_input_dynamic_grid()
 
 	call read_input_algorithm()
 
