@@ -9,6 +9,9 @@ Based on original TRISTAN code by Oscar Buneman.
 See http://tristan-mp.wikispaces.com for more extensive documentation. 
 Warning: some of the info on the wiki is obsolete. 
 
+https://arxiv.org/abs/astro-ph/0603211
+
+https://www-conf.slac.stanford.edu/ssi/2008/081208t_Spitkovsky.pdf
 
 
 
