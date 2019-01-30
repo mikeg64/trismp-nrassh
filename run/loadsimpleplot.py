@@ -26,8 +26,16 @@ from matplotlib import pyplot as plt
 plt.ion()
 # In[2]:
 
-files=sorted(glob.glob('output/flds.tot*'))
-prtfiles=sorted(glob.glob('output/prtl.tot*'))
+
+#basedir='/mnt/xdrive/Users/cs1mkg/temp/' #For linux desktop remote mount to research data store
+basedir='/shared/sp2rc2/Users/cs1mkg/temp/' #For automounted research data storage from ShARC
+
+files=sorted(glob.glob(basedir+'output-th85ph90/flds.tot*'))
+prtfiles=sorted(glob.glob(basedir+'output-th85ph90/prtl.tot*'))
+
+
+#files=sorted(glob.glob('output/flds.tot*'))
+#prtfiles=sorted(glob.glob('output/prtl.tot*'))
 # go through the files
 start=0
 end=len(files)
@@ -69,10 +77,10 @@ print np.shape(rho)
 #
 # Plot density field
 #
-fig1,ax1 = plt.subplots(1,2,num=1)
+#fig1,ax1 = plt.subplots(1,2,num=1)
 
-ax1[0].imshow(rho)
-ax1[1].imshow(bz)
+#ax1[0].imshow(rho)
+#ax1[1].imshow(bz)
 
 
 # In[43]:
@@ -123,6 +131,72 @@ ax1[1].imshow(bz)
 
 plt.show()  
 
+#compute average density over x-direction
+rhoav=np.zeros([652])
+dtemp=np.zeros([130])
+it=39
+dens=d[it]['dens']
+for ix in range(0,651,1):
+    for iy in range(0,129,1):
+        dtemp[iy]=dens[iy][ix]    
+    rhoav[ix]=np.mean(dtemp)
+
+
+#compute mean density for each time step
+itstep=1
+it=20
+rhot=np.zeros([40,652])
+for it in range(0,39,itstep):
+    dens=d[it]['dens']
+    rhot[it]=dens[64][:]
+
+
+
+
+
+#compute average density over y-direction for each time step
+rhoavit=np.zeros([652,40])
+dtemp=np.zeros([130])
+
+for it in range(0,39,itstep):
+    dens=d[it]['dens']
+    for ix in range(0,651,1):
+        for iy in range(0,129,1):
+            dtemp[iy]=dens[iy][ix]    
+        rhoavit[ix][it]=np.mean(dtemp)
+
+
+
+#
+# Plot density field
+#
+it=39
+fig4,ax4 = plt.subplots(2,2,num=1)
+
+#ax1[0].imshow(rho)
+#ax1[1].imshow(bz)
+
+ax4[0][0].contourf(d[it]['bz'])
+ax4[0][0].set_xlabel('x')
+ax4[0][0].set_ylabel('y')
+ax4[0][0].set_title('Magnetic Field (Bz)')
+
+ax4[0][1].contourf(d[it]['dens'])
+ax4[0][1].set_xlabel('x')
+ax4[0][1].set_ylabel('y')
+ax4[0][1].set_title('Density')
+
+ax4[1][0].plot(rhoav)
+ax4[1][0].set_xlabel('x')
+ax4[1][0].set_ylabel('Density')
+ax4[1][0].set_title('Density Averaged over y')
+
+
+
+ax4[1][1].contourf(rhoavit)
+ax4[1][1].set_xlabel('time')
+ax4[1][1].set_ylabel('x')
+ax4[1][1].set_title('Density Averaged over y')
 
 # In[ ]:
 
