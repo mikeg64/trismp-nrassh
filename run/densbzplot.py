@@ -29,7 +29,7 @@ plt.ion()
 
 #basedir='/mnt/xdrive/Users/cs1mkg/temp/' #For linux desktop remote mount to research data store
 basedir='/shared/sp2rc2/Users/cs1mkg/temp/' #For automounted research data storage from ShARC
-output='output-th15ph90'
+output='output-th85ph90'
 
 files=sorted(glob.glob(basedir+output+'/flds.tot*'))
 prtfiles=sorted(glob.glob(basedir+output+'/prtl.tot*'))
@@ -59,105 +59,11 @@ for filenum in range(start,end,interval):
           'xi':np.squeeze(f1['xi']),'xe':np.squeeze(f1['xe'])}    
     d.append(dict)
 
-
-# In[4]:
-
-#print len(dict['pxi'])
-
-
-# In[29]:
-
-print len(d)
-de=d[5]
-rho=de['dens']
-bz=de['bz']
-print np.shape(rho)
-
-
-# In[30]:
-
-#
-# Plot density field
-#
-#fig1,ax1 = plt.subplots(1,2,num=1)
-
-#ax1[0].imshow(rho)
-#ax1[1].imshow(bz)
-
-
-# In[43]:
-
-#fig2, ax2 = pyplot.subplots()
-#itstep=1
-#it=20
-
-#cs = ax2.contourf(d[it]['bz'])
-#cbar = fig2.colorbar(cs)
-
-#plt.show()  
-
-
-# In[ ]:
-
-
-
-
-# In[19]:
-
-#print(files)
-
-
-# In[49]:
-
-#itstep=1
-#it=20
-#rhot=np.zeros([40,652])
-#for it in range(0,39,itstep):
-#    dens=d[it]['dens']
-#    rhot[it]=dens[64][:]
-
-
-# In[50]:
-
-#print(np.shape(rhot))
-
-
-# In[51]:
-
-#fig3, ax3 = plt.subplots()
-#itstep=1
-#it=20
-
-#cs = ax3.contourf(rhot)
-#cbar = fig3.colorbar(cs)
-
-plt.show()  
-
-#compute average density over x-direction
-rhoav=np.zeros([652])
-dtemp=np.zeros([130])
-it=39
-dens=d[it]['dens']
-for ix in range(0,651,1):
-    for iy in range(0,129,1):
-        dtemp[iy]=dens[iy][ix]    
-    rhoav[ix]=np.mean(dtemp)
-
-
-#compute mean density for each time step
 itstep=1
-it=20
-rhot=np.zeros([40,652])
-for it in range(0,39,itstep):
-    dens=d[it]['dens']
-    rhot[it]=dens[64][:]
-
-
-
-
+it=2
 
 #compute average density over y-direction for each time step
-rhoavit=np.zeros([652,40])
+rhoavit=np.zeros([40,652])
 dtemp=np.zeros([130])
 
 for it in range(0,39,itstep):
@@ -165,40 +71,59 @@ for it in range(0,39,itstep):
     for ix in range(0,651,1):
         for iy in range(0,129,1):
             dtemp[iy]=dens[iy][ix]    
-        rhoavit[ix][it]=np.mean(dtemp)
+        rhoavit[it][ix]=np.mean(dtemp)
 
+
+#compute average bz over y-direction for each time step
+bzavit=np.zeros([40,652])
+bztemp=np.zeros([130])
+
+for it in range(0,39,itstep):
+    bz=d[it]['bz']
+    for ix in range(0,651,1):
+        for iy in range(0,129,1):
+            bztemp[iy]=bz[iy][ix]    
+        bzavit[it][ix]=np.mean(bztemp)
+
+
+itstep=1
+it=39
 
 
 #
 # Plot density field
 #
-it=39
+
 fig4,ax4 = plt.subplots(2,2,num=1)
 
 #ax1[0].imshow(rho)
 #ax1[1].imshow(bz)
 
-ax4[0][0].contourf(d[it]['bz'])
+cs1=ax4[0][0].contourf(d[it]['bz'])
 ax4[0][0].set_xlabel('x')
 ax4[0][0].set_ylabel('y')
-ax4[0][0].set_title('Magnetic Field (Bz)')
+ax4[0][0].set_title('Magnetic Field (Bz): for iteration:'+str(it))
+cbar1 = fig4.colorbar(cs1,ax=ax4[0][0],shrink=0.9)
 
-ax4[0][1].contourf(d[it]['dens'])
+
+
+cs2=ax4[0][1].contourf(d[it]['dens'])
 ax4[0][1].set_xlabel('x')
 ax4[0][1].set_ylabel('y')
-ax4[0][1].set_title('Density')
+ax4[0][1].set_title('Density: for iteration:'+str(it))
+cbar2 = fig4.colorbar(cs2,ax=ax4[0][1],shrink=0.9)
 
-ax4[1][0].plot(rhoav)
-ax4[1][0].set_xlabel('x')
-ax4[1][0].set_ylabel('Density')
-ax4[1][0].set_title('Density Averaged over y')
+cs3=ax4[1][0].contourf(bzavit)
+ax4[1][0].set_ylabel('time')
+ax4[1][0].set_xlabel('Bz')
+ax4[1][0].set_title('Bz Averaged over y')
+cbar3 = fig4.colorbar(cs3,ax=ax4[1][0],shrink=0.9)
 
-
-
-ax4[1][1].contourf(rhoavit)
-ax4[1][1].set_xlabel('time')
-ax4[1][1].set_ylabel('x')
+cs4=ax4[1][1].contourf(rhoavit)
+ax4[1][1].set_ylabel('time')
+ax4[1][1].set_xlabel('x')
 ax4[1][1].set_title('Density Averaged over y')
+cbar4 = fig4.colorbar(cs4,ax=ax4[1][1],shrink=0.9)
 
 # In[ ]:
 
