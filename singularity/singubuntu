@@ -1,0 +1,44 @@
+Bootstrap:docker
+From:ubuntu:18.04
+
+%setup
+      #Runs on host. The path to the image is $SINGULARITY_ROOTFS
+
+%post
+      #Post setup, runs inside the image
+      apt-get update
+#      add-apt-repository main
+#      add-apt-repository universe
+#      add-apt-repository restricted
+#      add-apt-repository multiverse
+
+      apt-get --assume-yes install git wget
+      wget http://fr.archive.ubuntu.com/ubuntu/pool/universe/h/h5utils/h5utils_1.13-2_i386.deb
+
+
+      apt-get --assume-yes  install h5utils
+
+  #Default mount paths
+      mkdir /scratch /data /shared /fastdata
+
+  #Nvidia driver mount paths, only needed if using GPU
+
+  #Add nvidia driver paths to the environment variables
+
+%runscript
+  #Runs inside the image every time it starts up
+
+%test
+  #Test script to verify that the image is built and running correctly
+  #h5utils -h
+  
+  
+#singularity create --size 4096 alces.img
+#sudo singularity bootstrap alces.img Singularity
+
+#sudo singularity build ubuntu-h5uti.simg singubuntu
+
+#run the image from an interactive shell using
+# singularity shell ubuntu-h5uti.simg
+
+# singularity exec ubuntu-h5uti.simg h5tovtk -h
