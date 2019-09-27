@@ -19,6 +19,12 @@ Cloned from
 https://github.com/ntoles/tristan-mp-pitp
 
 This version compiled for ShARC at The University of Sheffield
+
+Notes 
+https://docs.google.com/document/d/1tkDcVdh3bBPSMjtQN6cQeSDHAYJr02HIZu8slbOK3Mc/edit
+
+
+
 Following modifications were made in output.F90
 
  !intel compiler bug mem_space and file_space ids cannot be defined inline infunction MKG 25/1/2019 - search for comment with MKG 25/1/2019
